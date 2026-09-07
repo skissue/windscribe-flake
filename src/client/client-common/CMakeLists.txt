@@ -12,6 +12,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Network)
+find_package(c-ares CONFIG REQUIRED)
 
 set(PROJECT_SOURCES
     version/appversion.cpp
@@ -20,7 +21,7 @@ set(PROJECT_SOURCES
 
 add_library(client-common STATIC ${PROJECT_SOURCES})
 
-target_link_libraries(client-common PRIVATE Qt6::Core Qt6::Network OpenSSL::Crypto spdlog::spdlog wsnet::wsnet)
+target_link_libraries(client-common PRIVATE Qt6::Core Qt6::Network OpenSSL::Crypto c-ares::cares spdlog::spdlog wsnet::wsnet)
 
 if(WIN32)
     target_compile_definitions(client-common PRIVATE CMAKE_LIBRARY_LIBRARY WIN32_LEAN_AND_MEAN PIO_APC_ROUTINE_DEFINED)

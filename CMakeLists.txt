@@ -65,6 +65,7 @@ endif()
 option(BUILD_APP "Build the main GUI application" ON)
 option(BUILD_INSTALLER "Build the installer" ON)
 option(BUILD_TESTS "Build test executables" OFF)
+option(USE_SYSTEM_DEPENDENCIES "Use prebuilt dependencies instead of vcpkg and FetchContent" ON)
 set(INTEGRATION_TYPE "gui" CACHE STRING "Integration type to build (e.g. gui, cli)")
 option(SIGN_APP "Enable app code signing" OFF)
 option(SIGN_INSTALLER "Enable installer code signing" OFF)
@@ -122,7 +123,7 @@ endif()
 # ------------------------------------------------------------------------------
 
 # vcpkg integration (only needed for build operations, must be before project())
-if(BUILD_APP OR BUILD_INSTALLER OR BUILD_BOOTSTRAP)
+if(NOT USE_SYSTEM_DEPENDENCIES AND (BUILD_APP OR BUILD_INSTALLER OR BUILD_BOOTSTRAP))
     include(cmake/vcpkg.cmake)
 endif()
 
@@ -135,7 +136,7 @@ project(WS LANGUAGES CXX C)
 # wsnet ahead of the install only fails on CI.  The macro depends solely on state established before
 # project() (VCPKG_ROOT, VCPKG_TARGET_TRIPLET, CMAKE_BUILD_TYPE, the manifest root), so hoisting it
 # here is safe.
-if(BUILD_APP OR BUILD_INSTALLER OR BUILD_BOOTSTRAP)
+if(NOT USE_SYSTEM_DEPENDENCIES AND (BUILD_APP OR BUILD_INSTALLER OR BUILD_BOOTSTRAP))
     install_vcpkg_dependencies()
 endif()
 
@@ -213,12 +214,14 @@ endif()
 # leaving VCPKG_ROOT unset. Defined only here so an unguarded use fails to compile rather than
 # silently getting "".
 if(BUILD_APP)
-    ws_resolve_openvpn_version(WS_OPENVPN_VERSION)
+    if(NOT DEFINED WS_OPENVPN_VERSION)
+        ws_resolve_openvpn_version(WS_OPENVPN_VERSION)
+    endif()
     add_compile_definitions(WS_OPENVPN_VERSION="${WS_OPENVPN_VERSION}")
 
     # Resolved here rather than next to ws_resolve_shared_libs() below, because the names are needed
     # by the branding definitions that follow and by the subdirectories those definitions reach.
-    if(NOT WIN32)
+    if(NOT WIN32 AND NOT USE_SYSTEM_DEPENDENCIES)
         ws_resolve_openssl_libs()
         if(APPLE)
             # Not in the branding block below: the value is platform-specific, so a WS_MAC_ name must
@@ -418,4 +421,3 @@ elseif(APPLE)
 elseif(UNIX)
     include(cmake/packaging_linux.cmake)
 endif()
-

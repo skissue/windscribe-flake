@@ -1,0 +1,71 @@
+{
+  lib,
+  stdenv,
+  cmake,
+  ninja,
+  pkg-config,
+  qt6,
+  boost188,
+  acl,
+  c-ares,
+  spdlog,
+  miniaudio,
+  nftables,
+  src,
+  wsnet,
+  wsOpenSSL,
+  skyr,
+}:
+stdenv.mkDerivation {
+  pname = "windscribe-desktop";
+  version = "2.24.12";
+  inherit src;
+  nativeBuildInputs = [cmake ninja pkg-config qt6.wrapQtAppsHook];
+  buildInputs = [
+    wsOpenSSL
+    wsnet
+    qt6.qtbase
+    qt6.qtsvg
+    qt6.qttools
+    qt6.qtwayland
+    qt6.qtimageformats
+    acl
+    boost188
+    c-ares
+    spdlog
+    miniaudio
+    nftables
+    skyr
+  ];
+  # Runtime VPN executables and /opt packaging are left for the runtime phase.
+  preConfigure = ''
+    cmakeFlagsArray+=("-DCMAKE_INSTALL_RPATH=$out/lib")
+    mkdir -p build-libs/windscribe
+  '';
+  cmakeFlags = [
+    "-DBUILD_INSTALLER=OFF"
+    "-DBUILD_DEB=OFF"
+    "-DBUILD_RPM=OFF"
+    "-DUSE_SYSTEM_DEPENDENCIES=ON"
+    "-DWS_OPENVPN_VERSION=${(lib.importJSON ./sources/registry/ports/openvpn/vcpkg.json).version}"
+    "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+    "-DCMAKE_POLICY_DEFAULT_CMP0167=NEW"
+    "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON"
+    "-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON"
+    "-DOPENSSL_INCLUDE_DIR=${lib.getDev wsOpenSSL}/include"
+    "-DOPENSSL_SSL_LIBRARY=${lib.getLib wsOpenSSL}/lib/libssl.so"
+    "-DOPENSSL_CRYPTO_LIBRARY=${lib.getLib wsOpenSSL}/lib/libcrypto.so"
+  ];
+  env.NIX_CFLAGS_COMPILE = "-I${lib.getDev miniaudio}/include/miniaudio";
+  # Upstream's install rules bundle vcpkg files. Keep just the compiled artifacts.
+  installPhase = ''
+    runHook preInstall
+    install -Dm755 src/client/Windscribe $out/bin/Windscribe
+    install -Dm755 src/windscribe-cli/windscribe-cli $out/bin/windscribe-cli
+    install -Dm755 src/helper/linux/helper $out/libexec/windscribe/helper
+    mkdir -p $out/lib
+    ln -s ${wsnet}/lib/libwsnet.so $out/lib/libwsnet.so
+    runHook postInstall
+  '';
+  meta.platforms = ["x86_64-linux"];
+}

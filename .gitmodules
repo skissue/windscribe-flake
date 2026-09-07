@@ -1,0 +1,6 @@
+[submodule "nix/sources/wsnet"]
+	path = nix/sources/wsnet
+	url = https://github.com/Windscribe/wsnet.git
+[submodule "nix/sources/registry"]
+	path = nix/sources/registry
+	url = https://github.com/Windscribe/ws-vcpkg-registry.git
