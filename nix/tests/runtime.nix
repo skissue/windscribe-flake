@@ -73,6 +73,13 @@ in
           denied = machine.fail("runuser -u nobody -- ${client}/bin/gai-client up 2>&1")
           assert "Permission denied" in denied
 
+      with subtest("packaged OpenVPN starts without privileges or a tunnel"):
+          openvpn = "${windscribe}/libexec/windscribe/windscribeopenvpn"
+          machine.succeed(f"test -L {openvpn} && test -x {openvpn}")
+          version = machine.succeed(f"runuser -u alice -- {openvpn} --version")
+          assert version.startswith("OpenVPN ${(pkgs.lib.importJSON ../sources/registry/ports/openvpn/vcpkg.json).version} "), version
+          assert "OpenSSL 4.0.1" in version, version
+
       with subtest("script commands are available on the helper service PATH"):
           environment = shlex.split(machine.succeed("systemctl show windscribe-helper.service -p Environment --value"))
           path = next(entry.removeprefix("PATH=") for entry in environment if entry.startswith("PATH="))

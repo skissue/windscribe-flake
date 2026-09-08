@@ -1,0 +1,59 @@
+Use the configured parameter limit for parser boundary tests.
+Windscribe's anti-censorship patch increases it from 256 to 4096.
+
+--- a/tests/unit_tests/openvpn/test_options_parse.c
++++ b/tests/unit_tests/openvpn/test_options_parse.c
+@@ -75,7 +75,11 @@
+ static void
+ test_parse_line(void **state)
+ {
++    char max_parameter[OPTION_PARM_SIZE + 1];
++    char line[4 * OPTION_PARM_SIZE + 8];
++    memset(max_parameter, 'A', sizeof(max_parameter) - 1);
++    max_parameter[sizeof(max_parameter) - 1] = '\0';
+     char *p[MAX_PARMS + 1] = { 0 };
+     struct gc_arena gc = gc_new();
+     int res = 0;
+ 
+@@ -139,27 +143,31 @@
+     /* parameter just long enough */
+-    PARSE_LINE_TST("opt " A_TIMES_256);
++    snprintf(line, sizeof(line), "opt %s", max_parameter);
++    PARSE_LINE_TST(line);
+     assert_int_equal(res, 2);
+     assert_string_equal(p[0], "opt");
+-    assert_string_equal(p[1], A_TIMES_256);
++    assert_string_equal(p[1], max_parameter);
+     assert_null(p[res]);
+ 
+     /* quoting doesn't count for parameter length */
+-    PARSE_LINE_TST("opt \"" A_TIMES_256 "\"");
++    snprintf(line, sizeof(line), "opt \"%s\"", max_parameter);
++    PARSE_LINE_TST(line);
+     assert_int_equal(res, 2);
+     assert_string_equal(p[0], "opt");
+-    assert_string_equal(p[1], A_TIMES_256);
++    assert_string_equal(p[1], max_parameter);
+     assert_null(p[res]);
+ 
+     /* very long line */
+-    PARSE_LINE_TST("opt " A_TIMES_256 " " A_TIMES_256 " " A_TIMES_256 " " A_TIMES_256);
++    snprintf(line, sizeof(line), "opt %s %s %s %s", max_parameter, max_parameter, max_parameter, max_parameter);
++    PARSE_LINE_TST(line);
+     assert_int_equal(res, 5);
+     assert_string_equal(p[0], "opt");
+-    assert_string_equal(p[1], A_TIMES_256);
+-    assert_string_equal(p[2], A_TIMES_256);
+-    assert_string_equal(p[3], A_TIMES_256);
+-    assert_string_equal(p[4], A_TIMES_256);
++    assert_string_equal(p[1], max_parameter);
++    assert_string_equal(p[2], max_parameter);
++    assert_string_equal(p[3], max_parameter);
++    assert_string_equal(p[4], max_parameter);
+     assert_null(p[res]);
+ 
+     /* parameter too long */
+-    PARSE_LINE_TST("opt " A_TIMES_256 "B");
++    snprintf(line, sizeof(line), "opt %sB", max_parameter);
++    PARSE_LINE_TST(line);
+     assert_int_equal(res, 0);
