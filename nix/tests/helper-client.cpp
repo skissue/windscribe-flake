@@ -17,23 +17,35 @@ int main(int argc, char **argv)
         if (action == "up" || action == "down") {
             operation = HelperCommand::setGaiIpv4PriorityEnabled;
             payload = serializeResult(action == "up");
-        } else if (action == "wg-start") {
+        } else if (action == "wg-start" || action == "awg-start") {
             operation = HelperCommand::startWireGuard;
-            payload = serializeResult(false, false);
+            payload = serializeResult(action == "awg-start", false);
         } else if (action == "wg-stop") {
             operation = HelperCommand::stopWireGuard;
         } else if (action == "wg-status") {
             operation = HelperCommand::getWireGuardStatus;
-        } else if (action == "wg-configure") {
+        } else if (action == "wg-configure" || action == "awg-configure") {
             // Hex keys arrive on stdin, never in command arguments or test output.
             std::string privateKey, publicKey, presharedKey;
             if (!(std::cin >> privateKey >> publicKey >> presharedKey))
                 return 2;
+            AmneziawgConfig obfuscation;
+            if (action == "awg-configure") {
+                obfuscation.jc = 3;
+                obfuscation.jmin = 40;
+                obfuscation.jmax = 80;
+                obfuscation.s1 = 16;
+                obfuscation.s2 = 24;
+                obfuscation.h1 = "100001";
+                obfuscation.h2 = "200002";
+                obfuscation.h3 = "300003";
+                obfuscation.h4 = "400004";
+            }
             operation = HelperCommand::configureWireGuard;
             payload = serializeResult(privateKey, std::string("10.77.0.2/32"),
                 std::string("10.77.0.1"), publicKey, presharedKey,
                 std::string("198.18.0.2:51820"), std::string("0.0.0.0/0"),
-                uint16_t(51821), kSystemdResolved, AmneziawgConfig{});
+                uint16_t(51821), kSystemdResolved, obfuscation);
         } else {
             return 2;
         }

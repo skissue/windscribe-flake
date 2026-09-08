@@ -13,6 +13,14 @@
     '';
     installPhase = "install -Dm755 helper-client $out/bin/helper-client";
   };
+  # Only the helper sees this shim; the isolated vanilla peer keeps kernel WG.
+  modprobe = pkgs.writeShellScriptBin "modprobe" ''
+    if [ "$1" = wireguard ] && [ -e /run/force-wg-fallback ]; then
+      touch /run/wg-fallback-observed
+      exit 1
+    fi
+    exec ${pkgs.kmod}/bin/modprobe "$@"
+  '';
 in
   pkgs.testers.runNixOSTest {
     name = "windscribe-runtime";
@@ -51,7 +59,7 @@ in
       };
       systemd.services.windscribe-helper = {
         wantedBy = ["multi-user.target"];
-        path = with pkgs; [coreutils gnugrep gnused gawk iproute2 kmod procps systemd util-linux e2fsprogs openresolv];
+        path = [modprobe] ++ (with pkgs; [coreutils gnugrep gnused gawk iproute2 kmod procps systemd util-linux e2fsprogs openresolv]);
         serviceConfig = {
           ExecStart = "${windscribe}/libexec/windscribe/helper";
           LogsDirectory = "windscribe";
@@ -91,6 +99,18 @@ in
           version = machine.succeed(f"runuser -u alice -- {openvpn} --version")
           assert version.startswith("OpenVPN ${(pkgs.lib.importJSON ../sources/registry/ports/openvpn/vcpkg.json).version} "), version
           assert "OpenSSL 4.0.1" in version, version
+
+      with subtest("packaged AmneziaWG userspace daemon starts without credentials"):
+          amneziawg = "${windscribe}/libexec/windscribe/windscribeamneziawg"
+          machine.succeed(f"test -L {amneziawg} && test -x {amneziawg}")
+          version = machine.succeed(f"{amneziawg} --version")
+          assert version.startswith("amneziawg-go v0.2.16\n"), version
+          machine.succeed(f"systemd-run --unit=amneziawg-smoke --property=Type=simple --setenv=LOG_LEVEL=debug {amneziawg} -f awg-smoke0")
+          machine.wait_until_succeeds("test -S /run/amneziawg/awg-smoke0.sock")
+          machine.succeed("ip link show awg-smoke0")
+          machine.succeed("${pkgs.python3}/bin/python -c 'import socket; s = socket.socket(socket.AF_UNIX); s.connect(\"/run/amneziawg/awg-smoke0.sock\")'")
+          machine.succeed("systemctl stop amneziawg-smoke.service")
+          machine.wait_until_succeeds("test ! -e /run/amneziawg/awg-smoke0.sock && ! ip link show awg-smoke0")
 
       with subtest("script commands are available on the helper service PATH"):
           environment = shlex.split(machine.succeed("systemctl show windscribe-helper.service -p Environment --value"))
@@ -198,8 +218,14 @@ in
               assert resolved_property(manager, "Manager", name) == value
           machine.succeed("test ! -e /usr/local/lib/systemd/resolved.conf.d/windscribe.conf")
 
-      with subtest("kernel WireGuard through real helper IPC, isolated synthetic peer"):
+      for mode in ["kernel", "fallback", "amnezia"]:
+        with subtest(f"{mode} WireGuard through real helper IPC, isolated synthetic peer"):
           # All keys and network changes exist only inside this disposable VM.
+          if mode == "fallback":
+              machine.succeed("touch /run/force-wg-fallback")
+          else:
+              machine.succeed("test ! -e /run/force-wg-fallback")
+          uapi = "python3 ${./uapi.py}"
           machine.succeed("ip -4 route save default > /run/wg-default-routes; ip -4 route flush default")
           machine.succeed("ip netns add wg-peer; ip link add wg-underlay type veth peer name eth0 netns wg-peer")
           machine.succeed("ip addr add 192.0.2.1/30 dev wg-underlay; ip link set wg-underlay up")
@@ -207,31 +233,68 @@ in
           machine.succeed(f"{peer} ip addr add 192.0.2.2/30 dev eth0; {peer} ip link set eth0 up; {peer} ip link set lo up")
           machine.succeed(f"{peer} ip addr add 198.18.0.2/32 dev lo; ip route add default via 192.0.2.2")
           machine.succeed("install -d -m700 /run/wg-keys; umask 077; wg genkey > /run/wg-keys/client; wg genkey > /run/wg-keys/peer; wg genpsk > /run/wg-keys/psk; wg pubkey < /run/wg-keys/client > /run/wg-keys/client.pub; wg pubkey < /run/wg-keys/peer > /run/wg-keys/peer.pub")
-          machine.succeed(f"{peer} ip link add wg0 type wireguard; {peer} wg set wg0 private-key /run/wg-keys/peer listen-port 51820 peer $(cat /run/wg-keys/client.pub) preshared-key /run/wg-keys/psk allowed-ips 10.77.0.2/32")
+          if mode == "amnezia":
+              # Resolve the symlink so helper forceStop's pkill -f windscribeamneziawg
+              # cannot match the namespace peer's command line.
+              daemon = machine.succeed(f"readlink -f {amneziawg}").strip()
+              assert "windscribeamneziawg" not in daemon
+              machine.succeed(f"systemd-run --unit=awg-test-peer {peer} {daemon} -f wg0")
+              machine.wait_until_succeeds("test -S /run/amneziawg/wg0.sock")
+              machine.succeed(f"{uapi} configure-peer")
+          else:
+              machine.succeed(f"{peer} ip link add wg0 type wireguard; {peer} wg set wg0 private-key /run/wg-keys/peer listen-port 51820 peer $(cat /run/wg-keys/client.pub) preshared-key /run/wg-keys/psk allowed-ips 10.77.0.2/32")
           machine.succeed(f"{peer} ip addr add 10.77.0.1/24 dev wg0; {peer} ip link set wg0 up")
           machine.succeed(f"systemd-run --unit=wg-test-dns {peer} ${pkgs.dnsmasq}/bin/dnsmasq --keep-in-foreground --conf-file=/dev/null --no-resolv --no-hosts --bind-interfaces --listen-address=10.77.0.1 --address=/isolated.test/10.77.0.1")
           machine.wait_for_unit("wg-test-dns.service")
           routes = machine.succeed("ip -4 route show table all")
           rules = machine.succeed("ip -4 rule show")
+          # Packet counters change with traffic; compare rules, not counters.
+          firewall = machine.succeed("nft --stateless list ruleset")
           dns_before = {name: resolved_property(manager, "Manager", name) for name in baseline}
           try:
-              machine.succeed(f"{client} wg-start")
-              machine.succeed("grep -q 'Using wireguard kernel module' /var/log/windscribe/helper.log")
+              action = "awg" if mode == "amnezia" else "wg"
+              machine.succeed(f"{client} {action}-start")
+              if mode == "kernel":
+                  machine.succeed("grep -q 'Using wireguard kernel module' /var/log/windscribe/helper.log")
+                  machine.succeed("test ! -e /run/amneziawg/utun420.sock")
+              else:
+                  machine.wait_until_succeeds("test -S /run/amneziawg/utun420.sock")
+                  machine.succeed("grep -q 'Using amneziawg-go' /var/log/windscribe/helper.log")
+                  machine.succeed(f"pgrep -f '^{amneziawg} -f utun420$'")
+                  if mode == "fallback":
+                      machine.succeed("test -e /run/wg-fallback-observed")
               # Convert the generated base64 keys to the engine's hex IPC format without printing them.
               encode = "import base64; from pathlib import Path; print(' '.join(base64.b64decode(Path('/run/wg-keys/' + n).read_text()).hex() for n in ['client', 'peer.pub', 'psk']))"
-              machine.succeed(f"python3 -c {shlex.quote(encode)} | {client} wg-configure")
-              assert json.loads(machine.succeed("ip -d -j link show utun420"))[0]["linkinfo"]["info_kind"] == "wireguard"
+              machine.succeed(f"python3 -c {shlex.quote(encode)} | {client} {action}-configure")
+              kind = json.loads(machine.succeed("ip -d -j link show utun420"))[0]["linkinfo"]["info_kind"]
+              assert kind == ("wireguard" if mode == "kernel" else "tun"), kind
+              if mode == "amnezia":
+                  expected = dict(jc="3", jmin="40", jmax="80", s1="16", s2="24", h1="100001", h2="200002", h3="300003", h4="400004")
+                  for device in ["utun420", "wg0"]:
+                      actual = json.loads(machine.succeed(f"{uapi} {device}"))
+                      assert {key: actual[key] for key in expected} == expected, actual
               machine.succeed("ip -4 addr show utun420 | grep -q '10.77.0.2/32'")
               machine.succeed("ip -4 route show table 51820 | grep -q 'default dev utun420'")
               machine.succeed("ip -4 rule show | grep -q 'not.*fwmark 0xca6c lookup 51820'")
               machine.succeed("ip -4 route get 198.18.0.2 | grep -q 'via 192.0.2.2 dev wg-underlay'")
+              machine.succeed("ip -4 route get 203.0.113.99 | grep -q 'dev utun420 table 51820'")
               machine.succeed("nft list ruleset | grep -q 'chain wg_mangle_pre'")
               machine.wait_until_succeeds("ping -c 3 -W 2 10.77.0.1", timeout=datetime.timedelta(seconds=30))
+              machine.succeed(f"{peer} ping -c 3 -W 2 10.77.0.2")
               machine.wait_until_succeeds(f"{client} wg-status", timeout=datetime.timedelta(seconds=30))
-              # Independent kernel evidence, without wg showconf/dump (which expose keys).
-              assert int(machine.succeed("wg show utun420 latest-handshakes").split()[1]) > 0
-              transfer = machine.succeed(f"{peer} wg show wg0 transfer").split()
-              assert int(transfer[1]) > 0 and int(transfer[2]) > 0
+              # Independent evidence, never raw UAPI or wg showconf/dump (keys).
+              if mode == "kernel":
+                  assert int(machine.succeed("wg show utun420 latest-handshakes").split()[1]) > 0
+              else:
+                  status = json.loads(machine.succeed(f"{uapi} utun420"))
+                  assert all(int(status[key]) > 0 for key in ["last_handshake_time_sec", "rx_bytes", "tx_bytes"]), status
+              if mode == "amnezia":
+                  status = json.loads(machine.succeed(f"{uapi} wg0"))
+                  assert all(int(status[key]) > 0 for key in ["last_handshake_time_sec", "rx_bytes", "tx_bytes"]), status
+              else:
+                  assert int(machine.succeed(f"{peer} wg show wg0 latest-handshakes").split()[1]) > 0
+                  transfer = machine.succeed(f"{peer} wg show wg0 transfer").split()
+                  assert int(transfer[1]) > 0 and int(transfer[2]) > 0
               wg_index = machine.succeed("cat /sys/class/net/utun420/ifindex").strip()
               wg_link = json.loads(machine.succeed(f"busctl --json=short call org.freedesktop.resolve1 {manager} org.freedesktop.resolve1.Manager GetLink i {wg_index}"))["data"][0]
               assert resolved_property(wg_link, "Link", "DNS") == [[2, [10, 77, 0, 1]]]
@@ -243,13 +306,26 @@ in
               machine.succeed(f"{client} wg-stop")
               machine.succeed("rm -rf /run/wg-keys")
               machine.succeed("systemctl stop wg-test-dns.service")
-          machine.fail("ip link show utun420")
+          machine.wait_until_succeeds("test ! -e /run/amneziawg/utun420.sock && ! ip link show utun420")
+          machine.fail(f"pgrep -f '^{amneziawg} -f utun420$'")
           assert machine.succeed("ip -4 route show table all") == routes
           assert machine.succeed("ip -4 rule show") == rules
           machine.fail("nft list ruleset | grep -E 'chain wg_(raw|mangle)_'")
+          firewall_after = machine.succeed("nft --stateless list ruleset")
+          # The helper retains its empty shared table after the first connection.
+          empty_table = "table inet windscribe {\n}\n"
+          assert firewall_after.replace(empty_table, "") == firewall.replace(empty_table, ""), f"Before:\n{firewall}\nAfter:\n{firewall_after}"
           for name, value in dns_before.items():
               assert resolved_property(manager, "Manager", name) == value
           machine.succeed(f"{client} wg-stop")
+          machine.succeed("test ! -e /run/amneziawg/utun420.sock && ! ip link show utun420")
+          machine.fail(f"pgrep -f '^{amneziawg} -f utun420$'")
+          if mode == "amnezia":
+              machine.succeed("systemctl is-active awg-test-peer.service")
+              machine.succeed("systemctl stop awg-test-peer.service")
+              machine.wait_until_succeeds(f"test ! -e /run/amneziawg/wg0.sock && ! {peer} ip link show wg0")
+          # src_valid_mark intentionally retains wg-quick semantics; no sysctl reset.
+          machine.succeed("rm -f /run/force-wg-fallback /run/wg-fallback-observed")
           machine.succeed("ip route del default; ip link del wg-underlay; ip netns del wg-peer; ip -4 route restore < /run/wg-default-routes; rm /run/wg-default-routes")
           machine.succeed("test ! -e /run/wg-keys; test -z \"$(ip netns list)\"")
 
