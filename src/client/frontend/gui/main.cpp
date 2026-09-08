@@ -28,9 +28,7 @@
     #include <unistd.h>
     #include "utils/macutils.h"
 #elif defined (Q_OS_LINUX)
-    #include <libgen.h>         // dirname
-    #include <unistd.h>         // readlink
-    #include <linux/limits.h>   // PATH_MAX
+    #include <unistd.h>
     #include <signal.h>
     #include <sys/socket.h>
     #include "utils/linuxutils.h"
@@ -160,17 +158,6 @@ int main(int argc, char *argv[])
         QStringList pluginsPath;
         pluginsPath << MacUtils::getBundlePath() + "/Contents/PlugIns";
         QCoreApplication::setLibraryPaths(pluginsPath);
-#elif defined (Q_OS_LINUX)
-        //todo move to LinuxUtils
-        char result[PATH_MAX] = {};
-        ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
-        const char *path = "";
-        if (count != -1) {
-            path = dirname(result);
-        }
-        QStringList pluginsPath;
-        pluginsPath << QString::fromStdString(path) + "/plugins";
-        QCoreApplication::setLibraryPaths(pluginsPath);
     #endif
 #endif
 
@@ -178,8 +165,8 @@ int main(int argc, char *argv[])
 #ifndef WINDSCRIBE_DEV_MODE
     // SGID 'windscribe' GUI: neutralize env that could load attacker code, then drop the group.
     // Must precede the gid drop: some loaders (e.g. Mesa) re-honor these once egid == gid.
-    // GL is disabled (pure Widgets, no GL context); QT_QPA_PLATFORM_PLUGIN_PATH is read separately
-    // from setLibraryPaths above, so unset it to keep the platform plugin in the bundled dir.
+    // GL is disabled (pure Widgets, no GL context); use the wrapper's QT_PLUGIN_PATH
+    // rather than a separate platform plugin path.
     if (!qputenv("QT_XCB_GL_INTEGRATION", "none") || !qunsetenv("QT_QPA_PLATFORM_PLUGIN_PATH")) {
         qCCritical(LOG_BASIC) << "Could not neutralize environment";
         return -1;
@@ -334,4 +321,3 @@ int main(int argc, char *argv[])
 
     return ret;
 }
-
