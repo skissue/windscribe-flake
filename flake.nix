@@ -13,13 +13,14 @@
     pkgs = nixpkgs.legacyPackages.x86_64-linux;
     wsOpenSSL = pkgs.callPackage ./nix/deps/openssl.nix {};
     wsOpenVPN = pkgs.callPackage ./nix/deps/openvpn.nix {inherit wsOpenSSL;};
+    wsAmneziaWG = pkgs.callPackage ./nix/deps/amneziawg-go.nix {};
     wsCurl = pkgs.callPackage ./nix/deps/curl.nix {inherit wsOpenSSL;};
     skyr = pkgs.callPackage ./nix/deps/skyr-url.nix {};
     wsnet = pkgs.callPackage ./nix/deps/wsnet.nix {inherit wsOpenSSL wsCurl skyr;};
   in {
     packages.x86_64-linux.default = pkgs.callPackage ./nix/package.nix {
       src = self;
-      inherit wsnet wsOpenSSL wsOpenVPN skyr;
+      inherit wsnet wsOpenSSL wsOpenVPN wsAmneziaWG skyr;
     };
     checks.x86_64-linux.runtime = import ./nix/tests/runtime.nix {
       inherit pkgs;

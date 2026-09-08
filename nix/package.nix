@@ -26,6 +26,7 @@
   wsnet,
   wsOpenSSL,
   wsOpenVPN,
+  wsAmneziaWG,
   skyr,
 }:
 stdenv.mkDerivation {
@@ -49,7 +50,7 @@ stdenv.mkDerivation {
     nftables
     skyr
   ];
-  # AmneziaWG, WSTunnel, and Control-D executables are not packaged yet.
+  # WSTunnel and Control-D executables are not packaged yet.
   preConfigure = ''
     cmakeFlagsArray+=("-DCMAKE_INSTALL_RPATH=$out/lib" "-DWS_LINUX_INSTALL_DIR=$out/libexec/windscribe")
     mkdir -p build-libs/windscribe
@@ -90,6 +91,7 @@ stdenv.mkDerivation {
   # Add this after the Qt hook so it stays a plain symlink, not a Qt-wrapped executable.
   postFixup = ''
     ln -s ${wsOpenVPN}/sbin/openvpn $out/libexec/windscribe/windscribeopenvpn
+    ln -s ${wsAmneziaWG}/bin/amneziawg-go $out/libexec/windscribe/windscribeamneziawg
   '';
   meta.platforms = ["x86_64-linux"];
 }
