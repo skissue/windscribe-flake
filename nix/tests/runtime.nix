@@ -3,15 +3,15 @@
   windscribe,
 }: let
   client = pkgs.stdenv.mkDerivation {
-    name = "windscribe-gai-test-client";
+    name = "windscribe-helper-test-client";
     dontUnpack = true;
     buildInputs = [pkgs.boost188 pkgs.spdlog];
     buildPhase = ''
-      $CXX -std=c++17 -pthread ${./gai-client.cpp} \
+      $CXX -std=c++17 -pthread ${./helper-client.cpp} \
         -I${../../src/helper/common} -I${../../src/client/client-common} \
-        -lboost_serialization -lspdlog -lfmt -o gai-client
+        -lboost_serialization -lspdlog -lfmt -o helper-client
     '';
-    installPhase = "install -Dm755 gai-client $out/bin/gai-client";
+    installPhase = "install -Dm755 helper-client $out/bin/helper-client";
   };
 in
   pkgs.testers.runNixOSTest {
@@ -69,7 +69,7 @@ in
       start_all()
       machine.wait_for_unit("windscribe-helper.service")
       machine.wait_until_succeeds("test -S /run/windscribe/helper.sock")
-      client = "runuser -u alice -- ${client}/bin/gai-client"
+      client = "runuser -u alice -- ${client}/bin/helper-client"
       scripts = "${windscribe}/libexec/windscribe/scripts"
 
       with subtest("packaging and socket permissions"):
@@ -82,7 +82,7 @@ in
                   shebang = machine.succeed(f"head -1 {script}")
                   assert shebang.startswith("#!") and shebang[2:].lstrip().startswith("/nix/store/")
           machine.succeed("test ! -e /opt/windscribe")
-          denied = machine.fail("runuser -u nobody -- ${client}/bin/gai-client up 2>&1")
+          denied = machine.fail("runuser -u nobody -- ${client}/bin/helper-client up 2>&1")
           assert "Permission denied" in denied
 
       with subtest("packaged OpenVPN starts without privileges or a tunnel"):
