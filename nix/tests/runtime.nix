@@ -66,9 +66,11 @@ in
           expected = ["cgroups-down", "cgroups-up", "gai-ipv4-priority", "update-network-manager", "update-resolv-conf", "update-systemd-resolved"]
           assert machine.succeed(f"ls -1 {scripts}").splitlines() == expected
           for name in expected:
-              script = f"{scripts}/{name}"
-              machine.succeed(f"test -x {script} && ${pkgs.bash}/bin/bash -n {script}")
-              assert machine.succeed(f"head -1 {script}").startswith("#!/nix/store/")
+              for filename in [name, f".{name}-wrapped"]:
+                  script = f"{scripts}/{filename}"
+                  machine.succeed(f"test -x {script} && ${pkgs.bash}/bin/bash -n {script}")
+                  shebang = machine.succeed(f"head -1 {script}")
+                  assert shebang.startswith("#!") and shebang[2:].lstrip().startswith("/nix/store/")
           machine.succeed("test ! -e /opt/windscribe")
           denied = machine.fail("runuser -u nobody -- ${client}/bin/gai-client up 2>&1")
           assert "Permission denied" in denied
@@ -120,10 +122,12 @@ in
           print(f"{obj} {name}: {output.strip()}")
           return json.loads(output)["data"]
 
-      def dns_script(action, *options):
-          environment = [f"PATH={path}", f"script_type={action}", "dev=ws-test"]
+      def dns_script(action, *options, caller_path=None):
+          environment = [f"script_type={action}", "dev=ws-test"]
+          if caller_path is not None:
+              environment.append(f"PATH={caller_path}")
           environment += [f"foreign_option_{i}=dhcp-option {option}" for i, option in enumerate(options)]
-          machine.succeed(shlex.join(["env", *environment, f"{scripts}/update-systemd-resolved", "ws-test"]))
+          machine.succeed(shlex.join(["${pkgs.coreutils}/bin/env", "-i", *environment, f"{scripts}/update-systemd-resolved", "ws-test"]))
 
       machine.wait_for_unit("systemd-resolved.service")
       machine.succeed("ip link add ws-test type dummy && ip link set ws-test up")
@@ -135,7 +139,7 @@ in
       baseline = {name: resolved_property(manager, "Manager", name) for name in ["DNS", "Domains", "FallbackDNS"]}
       machine.succeed("cp /etc/systemd/resolved.conf /tmp/resolved-original")
 
-      with subtest("per-link resolved DNS and domain round trip"):
+      with subtest("per-link resolved DNS and domain round trip with an empty environment"):
           machine.succeed("resolvectl dns ws-other 198.51.100.53 && resolvectl domain ws-other other.invalid")
           other = {name: resolved_property(other_link, "Link", name) for name in ["DNS", "Domains"]}
           dns_script("up", "DNS 192.0.2.1", "DNS 192.0.2.2", "DOMAIN vpn.invalid", "DOMAIN-SEARCH search.invalid", "DOMAIN-ROUTE .")
@@ -152,6 +156,17 @@ in
           machine.succeed("resolvectl revert ws-other")
           for name, value in baseline.items():
               assert resolved_property(manager, "Manager", name) == value
+
+      with subtest("DNS hooks ignore an untrusted caller PATH"):
+          machine.succeed("mkdir -p /tmp/untrusted-bin")
+          fake = "#!${pkgs.bash}/bin/bash\n${pkgs.coreutils}/bin/touch /tmp/untrusted-tool-ran\nexit 99\n"
+          for tool in ["ip", "busctl", "logger", "resolvectl", "systemctl", "rm"]:
+              machine.succeed(f"printf %s {shlex.quote(fake)} > /tmp/untrusted-bin/{tool}; chmod +x /tmp/untrusted-bin/{tool}")
+          dns_script("up", "DNS 192.0.2.1", caller_path="/tmp/untrusted-bin")
+          assert resolved_property(link, "Link", "DNS") == [[2, [192, 0, 2, 1]]]
+          dns_script("down", caller_path="/tmp/untrusted-bin")
+          assert resolved_property(link, "Link", "DNS") == []
+          machine.succeed("test ! -e /tmp/untrusted-tool-ran")
 
       with subtest("loopback resolved override and restoration"):
           dns_script("up", "DNS 127.0.0.1", "DOMAIN-ROUTE .")

@@ -4,6 +4,17 @@
   cmake,
   ninja,
   pkg-config,
+  makeWrapper,
+  coreutils,
+  gnugrep,
+  gnused,
+  iproute2,
+  kmod,
+  procps,
+  systemd,
+  util-linux,
+  e2fsprogs,
+  openresolv,
   qt6,
   boost188,
   acl,
@@ -21,7 +32,7 @@ stdenv.mkDerivation {
   pname = "windscribe-desktop";
   version = "2.24.12";
   inherit src;
-  nativeBuildInputs = [cmake ninja pkg-config qt6.wrapQtAppsHook];
+  nativeBuildInputs = [cmake ninja pkg-config makeWrapper qt6.wrapQtAppsHook];
   buildInputs = [
     wsOpenSSL
     wsnet
@@ -67,6 +78,11 @@ stdenv.mkDerivation {
     install -Dm755 -t $out/libexec/windscribe/scripts \
       ../src/installer/windscribe/linux/opt/windscribe/scripts/*
     patchShebangs $out/libexec/windscribe/scripts
+    # OpenVPN does not pass the helper's environment to its hooks.
+    # Use shell wrappers so the Qt hook does not wrap these again as ELF executables.
+    for script in $out/libexec/windscribe/scripts/*; do
+      wrapProgramShell "$script" --set PATH "${lib.makeBinPath [coreutils gnugrep gnused iproute2 kmod procps systemd util-linux e2fsprogs openresolv]}"
+    done
     mkdir -p $out/lib
     ln -s ${wsnet}/lib/libwsnet.so $out/lib/libwsnet.so
     runHook postInstall
