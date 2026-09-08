@@ -29,7 +29,17 @@ in
         isNormalUser = true;
         extraGroups = ["windscribe"];
       };
-      environment.systemPackages = [windscribe client];
+      # Keep DHCP from racing DNS snapshots or configuring synthetic tunnel links.
+      networking.useDHCP = false;
+      networking.interfaces.eth0.ipv4.addresses = [
+        {
+          address = "10.0.2.15";
+          prefixLength = 24;
+        }
+      ];
+      networking.defaultGateway = "10.0.2.2";
+      networking.firewall.allowedUDPPorts = [51821];
+      environment.systemPackages = [windscribe client pkgs.wireguard-tools pkgs.dnsmasq pkgs.python3 pkgs.nftables];
       environment.etc."gai.conf".text = "# Nix-managed baseline\n";
       services.resolved = {
         enable = true;
@@ -41,7 +51,7 @@ in
       };
       systemd.services.windscribe-helper = {
         wantedBy = ["multi-user.target"];
-        path = with pkgs; [coreutils gnugrep gnused iproute2 kmod procps systemd util-linux e2fsprogs openresolv];
+        path = with pkgs; [coreutils gnugrep gnused gawk iproute2 kmod procps systemd util-linux e2fsprogs openresolv];
         serviceConfig = {
           ExecStart = "${windscribe}/libexec/windscribe/helper";
           LogsDirectory = "windscribe";
@@ -187,6 +197,61 @@ in
           for name, value in baseline.items():
               assert resolved_property(manager, "Manager", name) == value
           machine.succeed("test ! -e /usr/local/lib/systemd/resolved.conf.d/windscribe.conf")
+
+      with subtest("kernel WireGuard through real helper IPC, isolated synthetic peer"):
+          # All keys and network changes exist only inside this disposable VM.
+          machine.succeed("ip -4 route save default > /run/wg-default-routes; ip -4 route flush default")
+          machine.succeed("ip netns add wg-peer; ip link add wg-underlay type veth peer name eth0 netns wg-peer")
+          machine.succeed("ip addr add 192.0.2.1/30 dev wg-underlay; ip link set wg-underlay up")
+          peer = "ip netns exec wg-peer"
+          machine.succeed(f"{peer} ip addr add 192.0.2.2/30 dev eth0; {peer} ip link set eth0 up; {peer} ip link set lo up")
+          machine.succeed(f"{peer} ip addr add 198.18.0.2/32 dev lo; ip route add default via 192.0.2.2")
+          machine.succeed("install -d -m700 /run/wg-keys; umask 077; wg genkey > /run/wg-keys/client; wg genkey > /run/wg-keys/peer; wg genpsk > /run/wg-keys/psk; wg pubkey < /run/wg-keys/client > /run/wg-keys/client.pub; wg pubkey < /run/wg-keys/peer > /run/wg-keys/peer.pub")
+          machine.succeed(f"{peer} ip link add wg0 type wireguard; {peer} wg set wg0 private-key /run/wg-keys/peer listen-port 51820 peer $(cat /run/wg-keys/client.pub) preshared-key /run/wg-keys/psk allowed-ips 10.77.0.2/32")
+          machine.succeed(f"{peer} ip addr add 10.77.0.1/24 dev wg0; {peer} ip link set wg0 up")
+          machine.succeed(f"systemd-run --unit=wg-test-dns {peer} ${pkgs.dnsmasq}/bin/dnsmasq --keep-in-foreground --conf-file=/dev/null --no-resolv --no-hosts --bind-interfaces --listen-address=10.77.0.1 --address=/isolated.test/10.77.0.1")
+          machine.wait_for_unit("wg-test-dns.service")
+          routes = machine.succeed("ip -4 route show table all")
+          rules = machine.succeed("ip -4 rule show")
+          dns_before = {name: resolved_property(manager, "Manager", name) for name in baseline}
+          try:
+              machine.succeed(f"{client} wg-start")
+              machine.succeed("grep -q 'Using wireguard kernel module' /var/log/windscribe/helper.log")
+              # Convert the generated base64 keys to the engine's hex IPC format without printing them.
+              encode = "import base64; from pathlib import Path; print(' '.join(base64.b64decode(Path('/run/wg-keys/' + n).read_text()).hex() for n in ['client', 'peer.pub', 'psk']))"
+              machine.succeed(f"python3 -c {shlex.quote(encode)} | {client} wg-configure")
+              assert json.loads(machine.succeed("ip -d -j link show utun420"))[0]["linkinfo"]["info_kind"] == "wireguard"
+              machine.succeed("ip -4 addr show utun420 | grep -q '10.77.0.2/32'")
+              machine.succeed("ip -4 route show table 51820 | grep -q 'default dev utun420'")
+              machine.succeed("ip -4 rule show | grep -q 'not.*fwmark 0xca6c lookup 51820'")
+              machine.succeed("ip -4 route get 198.18.0.2 | grep -q 'via 192.0.2.2 dev wg-underlay'")
+              machine.succeed("nft list ruleset | grep -q 'chain wg_mangle_pre'")
+              machine.wait_until_succeeds("ping -c 3 -W 2 10.77.0.1", timeout=datetime.timedelta(seconds=30))
+              machine.wait_until_succeeds(f"{client} wg-status", timeout=datetime.timedelta(seconds=30))
+              # Independent kernel evidence, without wg showconf/dump (which expose keys).
+              assert int(machine.succeed("wg show utun420 latest-handshakes").split()[1]) > 0
+              transfer = machine.succeed(f"{peer} wg show wg0 transfer").split()
+              assert int(transfer[1]) > 0 and int(transfer[2]) > 0
+              wg_index = machine.succeed("cat /sys/class/net/utun420/ifindex").strip()
+              wg_link = json.loads(machine.succeed(f"busctl --json=short call org.freedesktop.resolve1 {manager} org.freedesktop.resolve1.Manager GetLink i {wg_index}"))["data"][0]
+              assert resolved_property(wg_link, "Link", "DNS") == [[2, [10, 77, 0, 1]]]
+              assert resolved_property(wg_link, "Link", "Domains") == [[".", True]]
+              machine.succeed("resolvectl flush-caches")
+              answer = machine.succeed("resolvectl query isolated.test")
+              assert "10.77.0.1" in answer and "utun420" in answer, answer
+          finally:
+              machine.succeed(f"{client} wg-stop")
+              machine.succeed("rm -rf /run/wg-keys")
+              machine.succeed("systemctl stop wg-test-dns.service")
+          machine.fail("ip link show utun420")
+          assert machine.succeed("ip -4 route show table all") == routes
+          assert machine.succeed("ip -4 rule show") == rules
+          machine.fail("nft list ruleset | grep -E 'chain wg_(raw|mangle)_'")
+          for name, value in dns_before.items():
+              assert resolved_property(manager, "Manager", name) == value
+          machine.succeed(f"{client} wg-stop")
+          machine.succeed("ip route del default; ip link del wg-underlay; ip netns del wg-peer; ip -4 route restore < /run/wg-default-routes; rm /run/wg-default-routes")
+          machine.succeed("test ! -e /run/wg-keys; test -z \"$(ip netns list)\"")
 
       with subtest("GUI connects to this VM's helper"):
           machine.wait_for_x()
