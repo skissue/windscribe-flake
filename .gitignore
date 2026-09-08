@@ -27,3 +27,6 @@ src/client/common/keys/linux/key.pub
 src/client/common/keys/linux/key_pub.txt
 src/installer/windows/signing/code_signing.pfx
 data/provisioning_profile/
+
+# nix
+/result*

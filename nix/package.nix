@@ -37,7 +37,7 @@ stdenv.mkDerivation {
     nftables
     skyr
   ];
-  # VPN executables and the remaining runtime scripts are not packaged yet.
+  # VPN executables are not packaged yet.
   preConfigure = ''
     cmakeFlagsArray+=("-DCMAKE_INSTALL_RPATH=$out/lib" "-DWS_LINUX_INSTALL_DIR=$out/libexec/windscribe")
     mkdir -p build-libs/windscribe
@@ -63,8 +63,8 @@ stdenv.mkDerivation {
     install -Dm755 src/client/Windscribe $out/bin/Windscribe
     install -Dm755 src/windscribe-cli/windscribe-cli $out/bin/windscribe-cli
     install -Dm755 src/helper/linux/helper $out/libexec/windscribe/helper
-    install -Dm755 ../src/installer/windscribe/linux/opt/windscribe/scripts/gai-ipv4-priority \
-      $out/libexec/windscribe/scripts/gai-ipv4-priority
+    install -Dm755 -t $out/libexec/windscribe/scripts \
+      ../src/installer/windscribe/linux/opt/windscribe/scripts/*
     patchShebangs $out/libexec/windscribe/scripts
     mkdir -p $out/lib
     ln -s ${wsnet}/lib/libwsnet.so $out/lib/libwsnet.so

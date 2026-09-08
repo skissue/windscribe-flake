@@ -33,7 +33,7 @@ in
       environment.etc."gai.conf".text = "# Nix-managed baseline\n";
       systemd.services.windscribe-helper = {
         wantedBy = ["multi-user.target"];
-        path = with pkgs; [coreutils gnugrep gnused iproute2 kmod procps systemd];
+        path = with pkgs; [coreutils gnugrep gnused iproute2 kmod procps systemd util-linux e2fsprogs openresolv];
         serviceConfig = {
           ExecStart = "${windscribe}/libexec/windscribe/helper";
           LogsDirectory = "windscribe";
@@ -45,19 +45,31 @@ in
     };
     testScript = ''
       import datetime
+      import shlex
 
       start_all()
       machine.wait_for_unit("windscribe-helper.service")
       machine.wait_until_succeeds("test -S /run/windscribe/helper.sock")
       client = "runuser -u alice -- ${client}/bin/gai-client"
-      script = "${windscribe}/libexec/windscribe/scripts/gai-ipv4-priority"
+      scripts = "${windscribe}/libexec/windscribe/scripts"
 
       with subtest("packaging and socket permissions"):
-          machine.succeed(f"test -x {script} && ${pkgs.bash}/bin/bash -n {script}")
-          assert machine.succeed(f"head -1 {script}").startswith("#!/nix/store/")
+          expected = ["cgroups-down", "cgroups-up", "gai-ipv4-priority", "update-network-manager", "update-resolv-conf", "update-systemd-resolved"]
+          assert machine.succeed(f"ls -1 {scripts}").splitlines() == expected
+          for name in expected:
+              script = f"{scripts}/{name}"
+              machine.succeed(f"test -x {script} && ${pkgs.bash}/bin/bash -n {script}")
+              assert machine.succeed(f"head -1 {script}").startswith("#!/nix/store/")
           machine.succeed("test ! -e /opt/windscribe")
           denied = machine.fail("runuser -u nobody -- ${client}/bin/gai-client up 2>&1")
           assert "Permission denied" in denied
+
+      with subtest("script commands are available on the helper service PATH"):
+          environment = shlex.split(machine.succeed("systemctl show windscribe-helper.service -p Environment --value"))
+          path = next(entry.removeprefix("PATH=") for entry in environment if entry.startswith("PATH="))
+          # restorecon is optional; resolvectl satisfies the systemd-resolve fallback.
+          for tool in "ip mount grep cut head cat rmdir modprobe readlink umount rm mkdir touch cp mv chattr resolvconf logger busctl systemctl whoami resolvectl sed".split():
+              machine.succeed(f"PATH={shlex.quote(path)} ${pkgs.bash}/bin/bash -c 'command -v {tool}'")
 
       with subtest("writable gai.conf round trip through helper IPC"):
           machine.succeed("cp /etc/gai.conf /tmp/gai-original && rm /etc/gai.conf && cp /tmp/gai-original /etc/gai.conf")
@@ -91,6 +103,9 @@ in
           machine.succeed("xauth merge /home/alice/.Xauthority")
           machine.succeed("su - alice -c 'DISPLAY=:0 QT_FORCE_STDERR_LOGGING=1 ${windscribe}/bin/Windscribe > /tmp/windscribe-gui.log 2>&1 &'")
           machine.wait_until_succeeds("grep -q 'connected to helper socket' /tmp/windscribe-gui.log", timeout=datetime.timedelta(seconds=60))
+          machine.wait_until_succeeds("grep -q 'IPC server for CLI started' /tmp/windscribe-gui.log", timeout=datetime.timedelta(seconds=60))
+          machine.succeed("grep -q 'cgroups disable' /var/log/windscribe/helper.log")
+          machine.fail("grep -E 'cgroups-down script failed|command not found' /var/log/windscribe/helper.log")
           machine.wait_for_window("Windscribe", timeout=datetime.timedelta(seconds=60))
           machine.screenshot("windscribe-startup")
           machine.succeed("systemctl is-active windscribe-helper.service")
