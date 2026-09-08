@@ -37,9 +37,9 @@ stdenv.mkDerivation {
     nftables
     skyr
   ];
-  # Runtime VPN executables and /opt packaging are left for the runtime phase.
+  # VPN executables and the remaining runtime scripts are not packaged yet.
   preConfigure = ''
-    cmakeFlagsArray+=("-DCMAKE_INSTALL_RPATH=$out/lib")
+    cmakeFlagsArray+=("-DCMAKE_INSTALL_RPATH=$out/lib" "-DWS_LINUX_INSTALL_DIR=$out/libexec/windscribe")
     mkdir -p build-libs/windscribe
   '';
   cmakeFlags = [
@@ -57,12 +57,15 @@ stdenv.mkDerivation {
     "-DOPENSSL_CRYPTO_LIBRARY=${lib.getLib wsOpenSSL}/lib/libcrypto.so"
   ];
   env.NIX_CFLAGS_COMPILE = "-I${lib.getDev miniaudio}/include/miniaudio";
-  # Upstream's install rules bundle vcpkg files. Keep just the compiled artifacts.
+  # Upstream's install rules bundle vcpkg files; install our runtime layout directly.
   installPhase = ''
     runHook preInstall
     install -Dm755 src/client/Windscribe $out/bin/Windscribe
     install -Dm755 src/windscribe-cli/windscribe-cli $out/bin/windscribe-cli
     install -Dm755 src/helper/linux/helper $out/libexec/windscribe/helper
+    install -Dm755 ../src/installer/windscribe/linux/opt/windscribe/scripts/gai-ipv4-priority \
+      $out/libexec/windscribe/scripts/gai-ipv4-priority
+    patchShebangs $out/libexec/windscribe/scripts
     mkdir -p $out/lib
     ln -s ${wsnet}/lib/libwsnet.so $out/lib/libwsnet.so
     runHook postInstall

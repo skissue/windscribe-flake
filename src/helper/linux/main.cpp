@@ -18,10 +18,7 @@ void handler_sigterm(int signum)
 
 int main(int argc, const char *argv[])
 {
-    // Pin before anything can spawn a child: every command we run as root goes through a shell,
-    // and the packages invoke us outside systemd (--reset-mac-addresses from prerm/preun), where
-    // the unit's Environment=PATH does not apply and dpkg hands us /usr/local/{sbin,bin} first.
-    setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
+    // The service supplies a trusted PATH for commands executed as root.
 
     // Initialize logger
     std::string path = WS_LINUX_LOG_DIR;

@@ -81,7 +81,7 @@ set(WS_WIN_CONFIG_SUBDIR "${WS_PRODUCT_NAME}")
 ### Linux
 ###
 
-set(WS_LINUX_INSTALL_DIR "/opt/windscribe")
+set(WS_LINUX_INSTALL_DIR "/opt/windscribe" CACHE PATH "Linux runtime executable and script directory")
 set(WS_LINUX_RUN_DIR "/var/run/windscribe")
 set(WS_LINUX_TMP_DIR "/var/lib/windscribe")
 set(WS_LINUX_LOG_DIR "/var/log/windscribe")

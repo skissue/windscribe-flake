@@ -20,5 +20,9 @@
       src = self;
       inherit wsnet wsOpenSSL skyr;
     };
+    checks.x86_64-linux.gai = import ./nix/tests/gai.nix {
+      inherit pkgs;
+      windscribe = self.packages.x86_64-linux.default;
+    };
   };
 }
