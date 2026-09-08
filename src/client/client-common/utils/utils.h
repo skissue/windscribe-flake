@@ -52,8 +52,8 @@ namespace Utils {
     const QString filenameQuotedSingle(const QString &filename);
     const QString filenameQuotedDouble(const QString &filename);
     const QString filenameEscapeSpaces(const QString &filename);
+    bool isFullyQualifiedPath(const QString &path);
 
-    bool copyDirectoryRecursive(QString fromDir, QString toDir);
     bool removeDirectory(const QString dir);
     QString toBase64(const QString& str);
     QString fromBase64(const QString& str);

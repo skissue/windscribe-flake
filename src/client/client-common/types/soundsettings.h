@@ -1,11 +1,12 @@
 #pragma once
 
+#include <QDebug>
+#include <QFileInfo>
+#include <QJsonObject>
+
 #include "types/enums.h"
 #include "utils/log/categories.h"
-
-#include <filesystem>
-#include <QDebug>
-#include <QJsonObject>
+#include "utils/utils.h"
 
 namespace types {
 
@@ -125,9 +126,8 @@ private:
             path.clear();
             return;
         }
-        std::error_code ec;
-        std::filesystem::path p(path.toStdString());
-        if (!p.is_absolute() || !std::filesystem::is_regular_file(p, ec)) {
+        const QFileInfo info(path);
+        if (!Utils::isFullyQualifiedPath(path) || !info.isFile()) {
             qCWarning(LOG_BASIC) << "SoundSettings: custom sound path is not a valid absolute file, resetting";
             type = SOUND_NOTIFICATION_TYPE_NONE;
             path.clear();

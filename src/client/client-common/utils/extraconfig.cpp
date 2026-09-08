@@ -55,12 +55,12 @@ void ExtraConfig::writeConfig(const QString &cfg, bool bWithLog)
         file.remove();
     } else if (file.open(QIODevice::WriteOnly)) {
         file.resize(0);
-        file.write(cfg.toLocal8Bit());
+        file.write(cfg.toUtf8());
         file.close();
 
         if (bWithLog) {
             qCDebug(LOG_BASIC) << "Wrote extra config file:" << path_;
-            qCDebug(LOG_BASIC) << "Extra options:" << cfg.toLocal8Bit();
+            qCDebug(LOG_BASIC) << "Extra options:" << cfg.toUtf8();
         }
     } else {
         qCWarning(LOG_BASIC) << "Could not open extra config file for writing:" << file.errorString();
@@ -406,7 +406,7 @@ void ExtraConfig::parseConfigFile()
         if (file.open(QIODevice::ReadOnly)) {
             QByteArray data = file.readAll();
             file.close();
-            configLines_ = QString::fromLocal8Bit(data).split("\n");
+            configLines_ = QString::fromUtf8(data).split("\n");
         } else {
             qCWarning(LOG_BASIC) << "Could not open extra config file, keeping current config:" << file.errorString();
         }

@@ -84,37 +84,29 @@ void SoundManager::playSound(const QString &path, bool loop, bool isPreview)
     }
     audioEngineInitialized_ = true;
 
-    if (path.startsWith(":/sounds")) {     // load from resources
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly)) {
-            qCDebug(LOG_BASIC) << "Failed to load the sound file" << path;
-            return;
-        }
-        audioBuffer_ = file.readAll();
-        file.close();
+    // Read the file through QFile rather than letting miniaudio open it: on Windows miniaudio opens narrow
+    // paths with the ANSI code page, so paths with non-ASCII characters fail to open.
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qCDebug(LOG_BASIC) << "Failed to load the sound file" << path;
+        return;
+    }
+    audioBuffer_ = file.readAll();
+    file.close();
 
-        result = ma_decoder_init_memory(audioBuffer_.data(), audioBuffer_.size(), NULL, &decoder_);
-        if (result != MA_SUCCESS) {
-            qCDebug(LOG_BASIC) << "ma_decoder_init_memory failed for the sound file" << path << ":" << result;
-            return;
-        } else {
-            decoderInitialized_ = true;
-        }
+    result = ma_decoder_init_memory(audioBuffer_.data(), audioBuffer_.size(), NULL, &decoder_);
+    if (result != MA_SUCCESS) {
+        qCDebug(LOG_BASIC) << "ma_decoder_init_memory failed for the sound file" << path << ":" << result;
+        return;
+    } else {
+        decoderInitialized_ = true;
+    }
 
-        result = ma_sound_init_from_data_source(&audioEngine_, &decoder_, MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_ASYNC,
-                                       NULL, &sound_);
-        if (result != MA_SUCCESS) {
-            qCDebug(LOG_BASIC) << "ma_sound_init_from_data_source failed for the sound file" << path << ":" << result;
-            return;
-        }
-    } else {    // load from a file
-        result = ma_sound_init_from_file(&audioEngine_, path.toUtf8().constData(),
-                                               MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_ASYNC,
-                                               NULL, NULL, &sound_);
-        if (result != MA_SUCCESS) {
-            qCDebug(LOG_BASIC) << "Failed to load sound file" << path << ":" << result;
-            return;
-        }
+    result = ma_sound_init_from_data_source(&audioEngine_, &decoder_, MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_ASYNC,
+                                            NULL, &sound_);
+    if (result != MA_SUCCESS) {
+        qCDebug(LOG_BASIC) << "ma_sound_init_from_data_source failed for the sound file" << path << ":" << result;
+        return;
     }
 
     soundInitialized_ = true;

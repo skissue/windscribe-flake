@@ -1,6 +1,6 @@
 #pragma once
 
-#include <filesystem>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSettings>
@@ -203,8 +203,7 @@ struct SplitTunnelingApp
             if (!path.startsWith('/')) {
                 fullName = path;
             } else {
-                std::error_code ec;
-                if (std::filesystem::exists(path.toStdString(), ec)) {
+                if (QFile::exists(path)) {
                     fullName = path;
                 }
             }
@@ -218,8 +217,7 @@ struct SplitTunnelingApp
 
         if (json.contains(kJsonIconProp) && json[kJsonIconProp].isString()) {
             QString path = json[kJsonIconProp].toString();
-            std::error_code ec;
-            if (std::filesystem::exists(path.toStdString(), ec)) {
+            if (QFile::exists(path)) {
                 icon = path;
             }
         }
@@ -371,10 +369,7 @@ struct SplitTunneling
                 // Linux Flatpak entries store the app ID (e.g. org.mozilla.firefox) here, which has
                 // no on-disk path. Only run the existence check for path-shaped values.
                 if (appPath.startsWith('/')) {
-                    std::error_code ec;
-                    std::filesystem::path path(appPath.toStdString());
-                    bool exists = std::filesystem::exists(path, ec);
-                    if (ec || !exists) {
+                    if (!QFile::exists(appPath)) {
                         qCDebug(LOG_BASIC) << "Skipping non-existent split tunneling app '" << appPath << "'";
                         continue;
                     }

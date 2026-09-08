@@ -15,6 +15,8 @@ private slots:
     void testEngineSettings_validNoop();
     void testEngineSettings_badLanguage();
     void testEngineSettings_badCustomOvpnPath();
+    void testEngineSettings_keepsExistingCustomOvpnPath();
+    void testEngineSettings_resetOnWindowsRelativeCustomOvpnPath();
     void testEngineSettings_oversizeNetworkPreferred();
     void testEngineSettings_outOfRangeDnsPolicy();
 
@@ -31,12 +33,16 @@ private slots:
     void testSoundSettings_clearsPathWhenNone();
     void testSoundSettings_resetOnNonResourceBundledPath();
     void testSoundSettings_resetOnBadCustomPath();
+    void testSoundSettings_keepsExistingCustomPath();
+    void testSoundSettings_resetOnWindowsRelativeCustomPath();
     void testSoundSettings_outOfRangeType();
 
     // BackgroundSettings
     void testBackgroundSettings_clearsPathWhenUnused();
     void testBackgroundSettings_resetOnNonResourceBundledPath();
     void testBackgroundSettings_resetOnBadCustomPath();
+    void testBackgroundSettings_keepsExistingCustomPath();
+    void testBackgroundSettings_resetOnWindowsRelativeCustomPath();
     void testBackgroundSettings_resetsAspectRatioWhenUnused();
 
     // PacketSize

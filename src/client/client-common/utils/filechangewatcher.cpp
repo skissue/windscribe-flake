@@ -1,10 +1,9 @@
 #include "filechangewatcher.h"
 
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
-
-#include <filesystem>
 
 #include "log/categories.h"
 
@@ -14,11 +13,10 @@ FileChangeWatcher::FileChangeWatcher(const QString &path, QObject *parent) : QOb
     connect(&reloadTimer_, &QTimer::timeout, this, &FileChangeWatcher::onReloadTimeout);
 
     // QFileSystemWatcher::addPath() silently fails if the directory does not exist yet, and on a fresh
-    // profile nothing has written the file yet. Create it (create_directories is a no-op if it
-    // already exists) so the watch below always takes hold.
+    // profile nothing has written the file yet. Create it (mkpath is a no-op if it already exists)
+    // so the watch below always takes hold.
     const QString dirPath = QFileInfo(path_).absolutePath();
-    std::error_code ec;
-    std::filesystem::create_directories(std::filesystem::path(dirPath.toStdString()), ec);
+    QDir().mkpath(dirPath);
 
     watcher_ = new QFileSystemWatcher(this);
     // Always watch the directory so we still get notified when the file is created or replaced via

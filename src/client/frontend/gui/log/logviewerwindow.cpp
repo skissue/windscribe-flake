@@ -107,7 +107,7 @@ void LogViewerWindow::onExportClick()
         QFile file(fileName);
         if (file.open(QIODevice::WriteOnly))
         {
-            file.write(log.toLocal8Bit());
+            file.write(log.toUtf8());
         }
         else
         {

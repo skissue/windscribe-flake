@@ -3,6 +3,8 @@
 #include "settingsvalidation.test.h"
 
 #include <QSettings>
+#include <QTemporaryDir>
+#include <QTemporaryFile>
 
 #include "types/backgroundsettings.h"
 #include "types/connecteddnsinfo.h"
@@ -56,6 +58,33 @@ void TestSettingsValidation::testEngineSettings_badCustomOvpnPath()
 {
     types::EngineSettingsData data;
     data.customOvpnConfigsPath = "/this/path/does/not/exist/foo";
+    data.validate();
+    QVERIFY(data.customOvpnConfigsPath.isEmpty());
+}
+
+void TestSettingsValidation::testEngineSettings_keepsExistingCustomOvpnPath()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    types::EngineSettingsData data;
+    data.customOvpnConfigsPath = dir.path();
+    data.validate();
+    QCOMPARE(data.customOvpnConfigsPath, dir.path());
+}
+
+void TestSettingsValidation::testEngineSettings_resetOnWindowsRelativeCustomOvpnPath()
+{
+#ifndef Q_OS_WIN
+    QSKIP("Drive-relative and root-relative paths are Windows forms");
+#endif
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    types::EngineSettingsData data;
+    data.customOvpnConfigsPath = dir.path().mid(2);
+    data.validate();
+    QVERIFY(data.customOvpnConfigsPath.isEmpty());
+
+    data.customOvpnConfigsPath = dir.path().left(2) + "configs";
     data.validate();
     QVERIFY(data.customOvpnConfigsPath.isEmpty());
 }
@@ -193,6 +222,37 @@ void TestSettingsValidation::testSoundSettings_resetOnBadCustomPath()
     QVERIFY(ss.connectedSoundPath.isEmpty());
 }
 
+void TestSettingsValidation::testSoundSettings_keepsExistingCustomPath()
+{
+    QTemporaryFile file;
+    QVERIFY(file.open());
+    types::SoundSettings ss;
+    ss.connectedSoundType = SOUND_NOTIFICATION_TYPE_CUSTOM;
+    ss.connectedSoundPath = file.fileName();
+    ss.validate();
+    QCOMPARE(ss.connectedSoundType, SOUND_NOTIFICATION_TYPE_CUSTOM);
+    QCOMPARE(ss.connectedSoundPath, file.fileName());
+}
+
+void TestSettingsValidation::testSoundSettings_resetOnWindowsRelativeCustomPath()
+{
+#ifndef Q_OS_WIN
+    QSKIP("Drive-relative and root-relative paths are Windows forms");
+#endif
+    QTemporaryFile file;
+    QVERIFY(file.open());
+    types::SoundSettings ss;
+    ss.connectedSoundType = SOUND_NOTIFICATION_TYPE_CUSTOM;
+    ss.connectedSoundPath = file.fileName().mid(2);
+    ss.disconnectedSoundType = SOUND_NOTIFICATION_TYPE_CUSTOM;
+    ss.disconnectedSoundPath = file.fileName().left(2) + "sound.mp3";
+    ss.validate();
+    QCOMPARE(ss.connectedSoundType, SOUND_NOTIFICATION_TYPE_NONE);
+    QVERIFY(ss.connectedSoundPath.isEmpty());
+    QCOMPARE(ss.disconnectedSoundType, SOUND_NOTIFICATION_TYPE_NONE);
+    QVERIFY(ss.disconnectedSoundPath.isEmpty());
+}
+
 void TestSettingsValidation::testSoundSettings_outOfRangeType()
 {
     types::SoundSettings ss;
@@ -230,6 +290,37 @@ void TestSettingsValidation::testBackgroundSettings_resetOnBadCustomPath()
     bs.disconnectedBackgroundType = BACKGROUND_TYPE_CUSTOM;
     bs.backgroundImageDisconnected = "relative/path.png";
     bs.validate();
+    QCOMPARE(bs.disconnectedBackgroundType, BACKGROUND_TYPE_COUNTRY_FLAGS);
+    QVERIFY(bs.backgroundImageDisconnected.isEmpty());
+}
+
+void TestSettingsValidation::testBackgroundSettings_keepsExistingCustomPath()
+{
+    QTemporaryFile file;
+    QVERIFY(file.open());
+    types::BackgroundSettings bs;
+    bs.connectedBackgroundType = BACKGROUND_TYPE_CUSTOM;
+    bs.backgroundImageConnected = file.fileName();
+    bs.validate();
+    QCOMPARE(bs.connectedBackgroundType, BACKGROUND_TYPE_CUSTOM);
+    QCOMPARE(bs.backgroundImageConnected, file.fileName());
+}
+
+void TestSettingsValidation::testBackgroundSettings_resetOnWindowsRelativeCustomPath()
+{
+#ifndef Q_OS_WIN
+    QSKIP("Drive-relative and root-relative paths are Windows forms");
+#endif
+    QTemporaryFile file;
+    QVERIFY(file.open());
+    types::BackgroundSettings bs;
+    bs.connectedBackgroundType = BACKGROUND_TYPE_CUSTOM;
+    bs.backgroundImageConnected = file.fileName().mid(2);
+    bs.disconnectedBackgroundType = BACKGROUND_TYPE_CUSTOM;
+    bs.backgroundImageDisconnected = file.fileName().left(2) + "image.png";
+    bs.validate();
+    QCOMPARE(bs.connectedBackgroundType, BACKGROUND_TYPE_COUNTRY_FLAGS);
+    QVERIFY(bs.backgroundImageConnected.isEmpty());
     QCOMPARE(bs.disconnectedBackgroundType, BACKGROUND_TYPE_COUNTRY_FLAGS);
     QVERIFY(bs.backgroundImageDisconnected.isEmpty());
 }
