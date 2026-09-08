@@ -81,6 +81,8 @@ up_loopback() {
   fi
 
   echo "[Resolve]" > "$WINDSCRIBE_SYSTEMD_CONFIG_FILE"
+  # DNS= is cumulative across configuration files; replace the global servers, don't append.
+  echo "DNS=" >> "$WINDSCRIBE_SYSTEMD_CONFIG_FILE"
   echo "DNS=$1" >> "$WINDSCRIBE_SYSTEMD_CONFIG_FILE"
   echo "Domains=~." >> "$WINDSCRIBE_SYSTEMD_CONFIG_FILE"
 

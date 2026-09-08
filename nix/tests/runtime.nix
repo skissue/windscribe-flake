@@ -15,7 +15,7 @@
   };
 in
   pkgs.testers.runNixOSTest {
-    name = "windscribe-gai";
+    name = "windscribe-runtime";
     nodes.machine = {
       imports = ["${pkgs.path}/nixos/tests/common/x11.nix"];
       test-support.displayManager.auto.user = "alice";
@@ -31,6 +31,14 @@ in
       };
       environment.systemPackages = [windscribe client];
       environment.etc."gai.conf".text = "# Nix-managed baseline\n";
+      services.resolved = {
+        enable = true;
+        settings.Resolve = {
+          DNS = "192.0.2.53";
+          Domains = "baseline.invalid";
+          FallbackDNS = "192.0.2.54";
+        };
+      };
       systemd.services.windscribe-helper = {
         wantedBy = ["multi-user.target"];
         path = with pkgs; [coreutils gnugrep gnused iproute2 kmod procps systemd util-linux e2fsprogs openresolv];
@@ -45,6 +53,7 @@ in
     };
     testScript = ''
       import datetime
+      import json
       import shlex
 
       start_all()
@@ -96,6 +105,66 @@ in
           machine.succeed("test -L /etc/gai.conf && cmp /etc/gai.conf /tmp/gai-original")
           machine.succeed(f"{client} down")
           machine.succeed("test -L /etc/gai.conf && cmp /etc/gai.conf /tmp/gai-original")
+
+      # Query resolved itself rather than relying on script exit codes or config files.
+      manager = "/org/freedesktop/resolve1"
+      def resolved_property(obj, interface, name):
+          output = machine.succeed(f"busctl --json=short get-property org.freedesktop.resolve1 {obj} org.freedesktop.resolve1.{interface} {name}")
+          print(f"{obj} {name}: {output.strip()}")
+          return json.loads(output)["data"]
+
+      def dns_script(action, *options):
+          environment = [f"PATH={path}", f"script_type={action}", "dev=ws-test"]
+          environment += [f"foreign_option_{i}=dhcp-option {option}" for i, option in enumerate(options)]
+          machine.succeed(shlex.join(["env", *environment, f"{scripts}/update-systemd-resolved", "ws-test"]))
+
+      machine.wait_for_unit("systemd-resolved.service")
+      machine.succeed("ip link add ws-test type dummy && ip link set ws-test up")
+      machine.succeed("ip link add ws-other type dummy && ip link set ws-other up")
+      index = machine.succeed("cat /sys/class/net/ws-test/ifindex").strip()
+      other_index = machine.succeed("cat /sys/class/net/ws-other/ifindex").strip()
+      link = json.loads(machine.succeed(f"busctl --json=short call org.freedesktop.resolve1 {manager} org.freedesktop.resolve1.Manager GetLink i {index}"))["data"][0]
+      other_link = json.loads(machine.succeed(f"busctl --json=short call org.freedesktop.resolve1 {manager} org.freedesktop.resolve1.Manager GetLink i {other_index}"))["data"][0]
+      baseline = {name: resolved_property(manager, "Manager", name) for name in ["DNS", "Domains", "FallbackDNS"]}
+      machine.succeed("cp /etc/systemd/resolved.conf /tmp/resolved-original")
+
+      with subtest("per-link resolved DNS and domain round trip"):
+          machine.succeed("resolvectl dns ws-other 198.51.100.53 && resolvectl domain ws-other other.invalid")
+          other = {name: resolved_property(other_link, "Link", name) for name in ["DNS", "Domains"]}
+          dns_script("up", "DNS 192.0.2.1", "DNS 192.0.2.2", "DOMAIN vpn.invalid", "DOMAIN-SEARCH search.invalid", "DOMAIN-ROUTE .")
+          assert resolved_property(link, "Link", "DNS") == [[2, [192, 0, 2, 1]], [2, [192, 0, 2, 2]]]
+          assert resolved_property(link, "Link", "Domains") == [["vpn.invalid", False], ["search.invalid", False], [".", True]]
+          for name, value in other.items():
+              assert resolved_property(other_link, "Link", name) == value
+          dns_script("down")
+          assert resolved_property(link, "Link", "DNS") == []
+          assert resolved_property(link, "Link", "Domains") == []
+          for name, value in other.items():
+              assert resolved_property(other_link, "Link", name) == value
+          # Manager DNS/Domains aggregate per-link entries; remove the unrelated fixture first.
+          machine.succeed("resolvectl revert ws-other")
+          for name, value in baseline.items():
+              assert resolved_property(manager, "Manager", name) == value
+
+      with subtest("loopback resolved override and restoration"):
+          dns_script("up", "DNS 127.0.0.1", "DOMAIN-ROUTE .")
+          assert [entry[-1] for entry in resolved_property(manager, "Manager", "DNS")] == [[127, 0, 0, 1]]
+          assert any(entry[-2:] == [".", True] for entry in resolved_property(manager, "Manager", "Domains"))
+          assert resolved_property(manager, "Manager", "FallbackDNS") == baseline["FallbackDNS"]
+          dns_script("down")
+          for name, value in baseline.items():
+              assert resolved_property(manager, "Manager", name) == value
+          machine.succeed("test ! -e /usr/local/lib/systemd/resolved.conf.d/windscribe.conf")
+          machine.succeed("cmp /etc/systemd/resolved.conf /tmp/resolved-original")
+          machine.succeed("systemctl is-active systemd-resolved.service")
+
+      with subtest("loopback teardown after the tunnel interface disappears"):
+          dns_script("up", "DNS 127.0.0.1", "DOMAIN-ROUTE .")
+          machine.succeed("ip link del ws-test")
+          dns_script("down")
+          for name, value in baseline.items():
+              assert resolved_property(manager, "Manager", name) == value
+          machine.succeed("test ! -e /usr/local/lib/systemd/resolved.conf.d/windscribe.conf")
 
       with subtest("GUI connects to this VM's helper"):
           machine.wait_for_x()
