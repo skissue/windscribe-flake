@@ -22,6 +22,14 @@
       src = self;
       inherit wsnet wsOpenSSL wsOpenVPN wsAmneziaWG skyr;
     };
+    nixosModules.default = {
+      lib,
+      pkgs,
+      ...
+    }: {
+      imports = [./nix/module.nix];
+      services.windscribe.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+    };
     checks.x86_64-linux.runtime = import ./nix/tests/runtime.nix {
       inherit pkgs;
       windscribe = self.packages.x86_64-linux.default;
