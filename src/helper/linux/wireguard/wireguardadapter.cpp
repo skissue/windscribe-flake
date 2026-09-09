@@ -1,6 +1,7 @@
 #include "wireguardadapter.h"
 #include "../../common/helper_commands.h"
 #include "../../common/io_posix.h"
+#include "../network_marks.h"
 #include "../nftables/nftablescontroller.h"
 #include "../utils.h"
 #include "types/ipaddress.h"
@@ -17,6 +18,10 @@
 
 namespace
 {
+
+// Reserved for Windscribe, after scoped host exceptions and before Tailscale's 5210+ rules.
+constexpr const char *kMainRulePriority = "5208";
+constexpr const char *kVpnRulePriority = "5209";
 
 struct CmdEntry {
     std::string program;
@@ -40,32 +45,20 @@ bool RunBlockingCommands(const std::vector<CmdEntry> &cmdlist)
 }
 
 // Tear down the per-family policy-routing rules previously added by enableRouting.
-// Idempotent: delete loops until `ip rule show` no longer matches our markers.
+// Match only our reserved priorities and selectors; never sweep foreign main-table rules.
 void deleteFwmarkRulesForFamily(const char *family, uint32_t routingTable)
 {
-    const std::string match_str = "lookup " + std::to_string(routingTable);
-    const std::string match_str2 = "from all lookup main suppress_prefixlength 0";
-
-    while (true) {
+    const std::vector<std::vector<std::string>> rules = {
+        {family, "rule", "delete", "priority", kVpnRulePriority, "not", "fwmark",
+         std::to_string(marks::kWireGuardFwMark), "table", std::to_string(routingTable)},
+        {family, "rule", "delete", "priority", kMainRulePriority,
+         "table", "main", "suppress_prefixlength", "0"},
+    };
+    for (const auto &args : rules) {
         std::string output;
-        Utils::executeCommand("ip", {family, "rule", "show"}, &output, false);
-
-        bool bContinue = false;
-        if (output.find(match_str) != std::string::npos) {
-            std::vector<CmdEntry> cmdlist;
-            cmdlist.push_back({"ip", {family, "rule", "delete", "table", std::to_string(routingTable)}});
-            RunBlockingCommands(cmdlist);
-            bContinue = true;
-        }
-        if (output.find(match_str2) != std::string::npos) {
-            std::vector<CmdEntry> cmdlist;
-            cmdlist.push_back({"ip", {family, "rule", "delete", "table", "main", "suppress_prefixlength", "0"}});
-            RunBlockingCommands(cmdlist);
-            bContinue = true;
-        }
-
-        if (!bContinue) {
-            break;
+        if (Utils::executeCommand("ip", args, &output) != 0
+            && output.find("No such file or directory") == std::string::npos) {
+            spdlog::warn("Failed to delete WireGuard policy rule: {}", output);
         }
     }
 }
@@ -217,8 +210,8 @@ bool WireGuardAdapter::enableRouting(const std::vector<std::string> &allowedIps,
                           canonical, fwmark, routingTable);
 
             cmdlist.push_back({"ip", {family, "route", "add", canonical, "dev", getName(), "table", tableStr}});
-            cmdlist.push_back({"ip", {family, "rule", "add", "not", "fwmark", fwmarkStr, "table", tableStr}});
-            cmdlist.push_back({"ip", {family, "rule", "add", "table", "main", "suppress_prefixlength", "0"}});
+            cmdlist.push_back({"ip", {family, "rule", "add", "priority", kVpnRulePriority, "not", "fwmark", fwmarkStr, "table", tableStr}});
+            cmdlist.push_back({"ip", {family, "rule", "add", "priority", kMainRulePriority, "table", "main", "suppress_prefixlength", "0"}});
 
             if (!RunBlockingCommands(cmdlist)) {
                 return false;

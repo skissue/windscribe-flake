@@ -188,16 +188,20 @@ bool enable(const std::string &vpnInterfaceName, const std::vector<std::string> 
     std::string buf = nft::addTable();
     buf += nft::ensureChain("dnsleaks", "type filter hook output priority -20; policy accept;");
 
-    // Accept loopback (local resolver). Intentionally NO interface-based tunnel exemption — and do not
-    // re-add one. The old shell design emitted `-o <vpn_iface> -j RETURN`, which was a bug: under a
+    // Accept loopback (local resolver). No blanket interface-based tunnel exemption:
+    // the old shell design emitted `-o <vpn_iface> -j RETURN`, which was a bug: under a
     // full-tunnel route the physical link's OS resolvers are reachable THROUGH the tunnel, so an
     // egress-interface RETURN let queries to them leave via the VPN exit — exactly the leak this chain
-    // exists to stop. The correct and only mechanism is destination-based: strip the tunnel's own
+    // exists to stop. Strip the tunnel's own
     // resolvers up front via allowedDnsServers (done above), then drop every remaining OS resolver
     // regardless of egress interface, which forces all DNS onto the VPN resolver. The allowedDnsServers
     // strip is therefore load-bearing by design; both sides canonicalize via IpAddress::toString(), and
     // removeMatching compares only the address half of a packed entry, so the exemption covers every port.
     buf += nft::rule("dnsleaks", "oifname \"lo\" accept");
+
+    // Tailscale MagicDNS is split DNS, not a physical resolver leak. Permit only its exact
+    // endpoint on tailscale0; the kill switch and the host's tailnet egress guard still apply.
+    buf += nft::rule("dnsleaks", "oifname \"tailscale0\" ip daddr 100.100.100.100 meta l4proto { tcp, udp } th dport 53 accept");
 
     auto emitDrops = [&buf](const std::string &fam, const std::vector<std::string> &entries) {
         for (const auto &entry : entries) {

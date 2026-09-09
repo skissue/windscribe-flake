@@ -104,24 +104,16 @@ fi
 
 # Allow IP rules to consult main routing table first, ignoring /0 or /1 routes
 ip rule add priority 16383 table main suppress_prefixlength 1
-# head -n1: the fwmark is a fixed constant, so a stale WG rule surviving an unclean disconnect
-# would make grep return multiple lines and break the $((priority - 1)) arithmetic below.
-priority="`ip rule show | grep -i "$wg_fwmark" | cut -d ":" -f1 | head -n1`" # priority of WireGuard rule (matched by fwmark), if it exists
-if [ -n "$priority" ]; then
-    # WG uses the same ip rule mechanism, just adjust the WG rule
-    ip rule add priority $((priority - 1)) table main suppress_prefixlength 0
-else
+# WireGuard owns its main-table bypass at a fixed priority; do not add a duplicate.
+if ! ip rule show | grep -qi "$wg_fwmark"; then
     # For non-WG protocols, remove rule forcing other traffic into the tunnel
     ip rule del priority 16385 table windscribe_include
 fi
 
-# IPv6 sibling of the priority adjust above. Same gate as the windscribe-table v6 rule above.
+# IPv6 sibling. Same gate as the windscribe-table v6 rule above.
 if [ -n "$def_gateway_v6" ] || [ -n "$def_ip_v6" ] || [ -n "$vpn_gateway_v6" ]; then
     ip -6 rule add priority 16383 table main suppress_prefixlength 1
-    priority_v6="`ip -6 rule show | grep -i "$wg_fwmark" | cut -d ":" -f1 | head -n1`"
-    if [ -n "$priority_v6" ]; then
-        ip -6 rule add priority $((priority_v6 - 1)) table main suppress_prefixlength 0
-    else
+    if ! ip -6 rule show | grep -qi "$wg_fwmark"; then
         ip -6 rule del priority 16385 table windscribe_include
     fi
 fi
