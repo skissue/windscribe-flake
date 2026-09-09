@@ -1,6 +1,7 @@
 {
   pkgs,
   windscribe,
+  module,
 }: let
   client = pkgs.stdenv.mkDerivation {
     name = "windscribe-helper-test-client";
@@ -24,18 +25,21 @@
 in
   pkgs.testers.runNixOSTest {
     name = "windscribe-runtime";
+    enableOCR = true;
     nodes.machine = {
-      imports = ["${pkgs.path}/nixos/tests/common/x11.nix"];
+      imports = [module "${pkgs.path}/nixos/tests/common/x11.nix"];
+      services.windscribe = {
+        enable = true;
+        package = windscribe;
+      };
       test-support.displayManager.auto.user = "alice";
-      users.groups.windscribe = {};
-      users.users.windscribe = {
+      # Only the synthetic IPC fixture gets account-wide helper access.
+      users.users.fixture = {
         isSystemUser = true;
         group = "windscribe";
       };
-      # VM-only access policy; not a decision about production GUI privileges.
       users.users.alice = {
         isNormalUser = true;
-        extraGroups = ["windscribe"];
       };
       # Keep DHCP from racing DNS snapshots or configuring synthetic tunnel links.
       networking.useDHCP = false;
@@ -47,7 +51,7 @@ in
       ];
       networking.defaultGateway = "10.0.2.2";
       networking.firewall.allowedUDPPorts = [51821];
-      environment.systemPackages = [windscribe client pkgs.wireguard-tools pkgs.dnsmasq pkgs.python3 pkgs.nftables];
+      environment.systemPackages = [client pkgs.wireguard-tools pkgs.dnsmasq pkgs.python3 pkgs.nftables];
       environment.etc."gai.conf".text = "# Nix-managed baseline\n";
       services.resolved = {
         enable = true;
@@ -58,14 +62,7 @@ in
         };
       };
       systemd.services.windscribe-helper = {
-        wantedBy = ["multi-user.target"];
-        path = [modprobe] ++ (with pkgs; [coreutils gnugrep gnused gawk iproute2 kmod procps systemd util-linux e2fsprogs openresolv]);
-        serviceConfig = {
-          ExecStart = "${windscribe}/libexec/windscribe/helper";
-          LogsDirectory = "windscribe";
-          StateDirectory = "windscribe";
-          RuntimeDirectory = "windscribe";
-        };
+        path = pkgs.lib.mkBefore [modprobe];
       };
       virtualisation.memorySize = 2048;
     };
@@ -77,7 +74,7 @@ in
       start_all()
       machine.wait_for_unit("windscribe-helper.service")
       machine.wait_until_succeeds("test -S /run/windscribe/helper.sock")
-      client = "runuser -u alice -- ${client}/bin/helper-client"
+      client = "runuser -u fixture -- ${client}/bin/helper-client"
       scripts = "${windscribe}/libexec/windscribe/scripts"
 
       with subtest("packaging and socket permissions"):
@@ -90,8 +87,16 @@ in
                   shebang = machine.succeed(f"head -1 {script}")
                   assert shebang.startswith("#!") and shebang[2:].lstrip().startswith("/nix/store/")
           machine.succeed("test ! -e /opt/windscribe")
-          denied = machine.fail("runuser -u nobody -- ${client}/bin/helper-client up 2>&1")
-          assert "Permission denied" in denied
+          assert "windscribe" not in machine.succeed("id -nG alice").split()
+          assert machine.succeed("stat -c '%U:%G %a' /run/windscribe/helper.sock").strip() == "root:windscribe 770"
+          for user in ["alice", "nobody"]:
+              denied = machine.fail(f"runuser -u {user} -- ${client}/bin/helper-client up 2>&1")
+              assert "Permission denied" in denied
+          for name in ["Windscribe", "windscribe-cli"]:
+              assert machine.succeed(f"su - alice -c 'command -v {name}'").strip() == f"/run/wrappers/bin/{name}"
+              owner, mode = machine.succeed(f"stat -Lc '%U:%G %a' /run/wrappers/bin/{name}").split()
+              assert owner == "root:windscribe", owner
+              assert int(mode, 8) & 0o7111 == 0o2111, mode
 
       with subtest("packaged OpenVPN starts without privileges or a tunnel"):
           openvpn = "${windscribe}/libexec/windscribe/windscribeopenvpn"
@@ -333,16 +338,68 @@ in
           machine.wait_for_x()
           machine.wait_for_file("/home/alice/.Xauthority")
           machine.succeed("xauth merge /home/alice/.Xauthority")
-          machine.succeed("su - alice -c 'DISPLAY=:0 QT_FORCE_STDERR_LOGGING=1 ${windscribe}/bin/Windscribe > /tmp/windscribe-gui.log 2>&1 &'")
-          machine.wait_until_succeeds("grep -q 'connected to helper socket' /tmp/windscribe-gui.log", timeout=datetime.timedelta(seconds=60))
+          uid = machine.succeed("id -u alice").strip()
+          gid = machine.succeed("id -g alice").strip()
+          session = f"DISPLAY=:0 XDG_RUNTIME_DIR=/run/user/{uid} DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus"
+          def alice(command):
+              return "su - alice -c " + shlex.quote(f"{session} {command}")
+          machine.succeed(alice("QT_FORCE_STDERR_LOGGING=1 Windscribe > /tmp/windscribe-gui.log 2>&1 &"))
+          try:
+              machine.wait_until_succeeds("grep -q 'connected to helper socket' /tmp/windscribe-gui.log", timeout=datetime.timedelta(seconds=60))
+          finally:
+              print(machine.succeed("cat /tmp/windscribe-gui.log"))
           machine.wait_until_succeeds("grep -q 'IPC server for CLI started' /tmp/windscribe-gui.log", timeout=datetime.timedelta(seconds=60))
           machine.succeed("grep -q 'cgroups disable' /var/log/windscribe/helper.log")
           machine.fail("grep -E 'cgroups-down script failed|command not found' /var/log/windscribe/helper.log")
           machine.wait_for_window("Windscribe", timeout=datetime.timedelta(seconds=60))
-          machine.screenshot("windscribe-startup")
+          machine.wait_for_text("Get Started")
+          machine.screenshot("windscribe-welcome")
           machine.succeed("systemctl is-active windscribe-helper.service")
-          machine.succeed("pgrep -u alice -f '^${windscribe}/bin/Windscribe$'")
+          def gui_pid():
+              return machine.succeed("for p in /proc/[0-9]*; do [ \"$(readlink $p/exe)\" = '${windscribe}/bin/.Windscribe-wrapped' ] && basename $p; done; true").strip()
+          def check_gui():
+              pid = gui_pid()
+              assert pid.isdigit(), pid
+              status = machine.succeed(f"cat /proc/{pid}/status")
+              print(status)
+              fields = dict(line.split(":", 1) for line in status.splitlines())
+              assert fields["Uid"].split() == [uid] * 4
+              assert fields["Gid"].split() == [gid] * 4
+              assert machine.succeed("getent group windscribe").split(":")[2] not in fields["Groups"].split()
+              # Inspect threads separately: the helper connection thread intentionally
+              # retains its group; main-thread credentials cannot establish otherwise.
+              print(machine.succeed(f"grep -E '^(Name|Pid|Gid):' /proc/{pid}/task/*/status"))
+              maps = machine.succeed(f"cat /proc/{pid}/maps")
+              for library in ["libwsnet.so", "libQt6DBus.so", "libqxcb.so"]:
+                  assert any("/nix/store/" in line and library in line for line in maps.splitlines()), library
+              print(machine.succeed(f"tr '\\0' '\\n' < /proc/{pid}/environ | grep -E '^(QT_|LD_LIBRARY_PATH=)'"))
+              bus = machine.succeed(alice("busctl --user --no-pager list"))
+              assert any(line.split()[1:2] == [pid] for line in bus.splitlines()), bus
+              return pid
+          pid = check_gui()
+          output = machine.succeed(alice("windscribe-cli status"))
+          assert "Login state: Logged out" in output, output
+          output = machine.fail(alice("windscribe-cli connect"))
+          assert "Not logged in" in output, output
           machine.copy_from_machine("/tmp/windscribe-gui.log")
           machine.copy_from_machine("/var/log/windscribe/helper.log")
+
+      with subtest("CLI auto-starts a fresh GUI through the packaged launcher"):
+          machine.succeed(f"kill -TERM {pid}")
+          machine.wait_until_succeeds(f"test ! -e /proc/{pid}")
+          assert gui_pid() == ""
+          gui_log = "/home/alice/.local/share/Windscribe/Windscribe2/client.log"
+          machine.succeed(f"test -f {gui_log}; rm {gui_log}")
+          output = machine.succeed(alice("windscribe-cli status"))
+          assert "Login state: Logged out" in output, output
+          assert check_gui() != pid
+          machine.wait_until_succeeds(f"grep -q 'connected to helper socket' {gui_log}")
+          machine.succeed(f"grep -q 'IPC server for CLI started' {gui_log}")
+          machine.wait_for_text("Get Started")
+          output = machine.fail(alice("windscribe-cli connect"))
+          assert "Not logged in" in output, output
+          machine.copy_from_machine(gui_log)
+          machine.copy_from_machine("/var/log/windscribe/helper.log")
+          machine.succeed(f"kill -TERM {gui_pid()}")
     '';
   }

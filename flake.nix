@@ -32,6 +32,7 @@
     };
     checks.x86_64-linux.runtime = import ./nix/tests/runtime.nix {
       inherit pkgs;
+      module = self.nixosModules.default;
       windscribe = self.packages.x86_64-linux.default;
     };
   };
