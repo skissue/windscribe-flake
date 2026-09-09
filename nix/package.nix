@@ -76,6 +76,10 @@ stdenv.mkDerivation {
     install -Dm755 src/client/Windscribe $out/bin/Windscribe
     install -Dm755 src/windscribe-cli/windscribe-cli $out/bin/windscribe-cli
     install -Dm755 src/helper/linux/helper $out/libexec/windscribe/helper
+    install -Dm644 ../src/installer/gui/linux/overlay/usr/share/applications/windscribe.desktop \
+      $out/share/applications/windscribe.desktop
+    mkdir -p $out/share/icons
+    cp -r ../src/installer/gui/linux/overlay/usr/share/icons/hicolor $out/share/icons/
     install -Dm755 -t $out/libexec/windscribe/scripts \
       ../src/installer/windscribe/linux/opt/windscribe/scripts/*
     patchShebangs $out/libexec/windscribe/scripts

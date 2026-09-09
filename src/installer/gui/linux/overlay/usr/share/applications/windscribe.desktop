@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Terminal=false
-Exec=/opt/windscribe/Windscribe %F
+Exec=Windscribe %F
 Name=Windscribe
 Icon=Windscribe
 Categories=Network
