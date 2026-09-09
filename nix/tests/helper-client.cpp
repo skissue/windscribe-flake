@@ -17,6 +17,34 @@ int main(int argc, char **argv)
         if (action == "up" || action == "down") {
             operation = HelperCommand::setGaiIpv4PriorityEnabled;
             payload = serializeResult(action == "up");
+        } else if (action == "split-on" || action == "split-off") {
+            operation = HelperCommand::setSplitTunnelingSettings;
+            payload = serializeResult(action == "split-on", true, true,
+                std::vector<std::string>(),
+                std::vector<std::string>{"100.72.0.0/16", "100.100.100.100"},
+                std::vector<std::string>());
+        } else if (action == "connected" || action == "disconnected") {
+            operation = HelperCommand::sendConnectStatus;
+            ADAPTER_GATEWAY_INFO physical, vpn;
+            physical.adapterName = "wg-underlay";
+            physical.adapterIp = types::IpAddress("192.0.2.1");
+            physical.gatewayIp = types::IpAddress("192.0.2.2");
+            vpn.adapterName = "utun420";
+            vpn.adapterIp = types::IpAddress("10.77.0.2");
+            vpn.gatewayIp = vpn.adapterIp;
+            vpn.dnsServers = {types::IpAddress("10.255.255.1")};
+            payload = serializeResult(action == "connected", kCmdProtocolWireGuard, physical, vpn,
+                types::IpAddress("198.18.0.2"), types::IpAddress("198.18.0.2"), std::vector<std::string>());
+        } else if (action == "firewall-on") {
+            operation = HelperCommand::setFirewallRules;
+            FirewallConfig config;
+            config.connectingIp = "198.18.0.2";
+            config.vpnInterfaceName = "utun420";
+            config.allowLanTraffic = true;
+            payload = serializeResult(config);
+        } else if (action == "firewall-off") {
+            operation = HelperCommand::clearFirewallRules;
+            payload = serializeResult(false);
         } else if (action == "wg-start" || action == "awg-start") {
             operation = HelperCommand::startWireGuard;
             payload = serializeResult(action == "awg-start", false);
@@ -42,9 +70,9 @@ int main(int argc, char **argv)
                 obfuscation.h4 = "400004";
             }
             operation = HelperCommand::configureWireGuard;
-            payload = serializeResult(privateKey, std::string("10.77.0.2/32"),
-                std::string("10.77.0.1"), publicKey, presharedKey,
-                std::string("198.18.0.2:51820"), std::string("0.0.0.0/0"),
+            payload = serializeResult(privateKey, std::string(action == "awg-configure" ? "10.77.0.2/32" : "10.77.0.2/32,fd77::2/128"),
+                std::string("10.255.255.1"), publicKey, presharedKey,
+                std::string("198.18.0.2:51820"), std::string(action == "awg-configure" ? "0.0.0.0/0" : "0.0.0.0/0,::/0"),
                 uint16_t(51821), kSystemdResolved, obfuscation);
         } else {
             return 2;
@@ -63,7 +91,7 @@ int main(int argc, char **argv)
 
         int responseLength;
         boost::asio::read(socket, boost::asio::buffer(&responseLength, sizeof(responseLength)));
-        if (action == "up" || action == "down")
+        if (action == "up" || action == "down" || action == "split-on" || action == "split-off")
             return responseLength == 0 ? 0 : 1;
         if (responseLength <= 0 || responseLength > 4096)
             return 1;

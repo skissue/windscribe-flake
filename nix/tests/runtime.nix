@@ -9,7 +9,9 @@
     buildInputs = [pkgs.boost188 pkgs.spdlog];
     buildPhase = ''
       $CXX -std=c++17 -pthread ${./helper-client.cpp} \
+        ${../../src/client/client-common/types/ipaddress.cpp} \
         -I${../../src/helper/common} -I${../../src/client/client-common} \
+        -I${../../src/client/client-common/types} \
         -lboost_serialization -lspdlog -lfmt -o helper-client
     '';
     installPhase = "install -Dm755 helper-client $out/bin/helper-client";
@@ -51,7 +53,7 @@ in
       ];
       networking.defaultGateway = "10.0.2.2";
       networking.firewall.allowedUDPPorts = [51821];
-      environment.systemPackages = [client pkgs.wireguard-tools pkgs.dnsmasq pkgs.python3 pkgs.nftables];
+      environment.systemPackages = [client pkgs.wireguard-tools pkgs.dnsmasq pkgs.dig pkgs.python3 pkgs.nftables];
       environment.etc."gai.conf".text = "# Nix-managed baseline\n";
       services.resolved = {
         enable = true;
@@ -236,6 +238,7 @@ in
           machine.succeed("ip addr add 192.0.2.1/30 dev wg-underlay; ip link set wg-underlay up")
           peer = "ip netns exec wg-peer"
           machine.succeed(f"{peer} ip addr add 192.0.2.2/30 dev eth0; {peer} ip link set eth0 up; {peer} ip link set lo up")
+          machine.succeed(f"ip addr add 10.20.30.1/24 dev wg-underlay; {peer} ip addr add 10.20.30.2/24 dev eth0")
           machine.succeed(f"{peer} ip addr add 198.18.0.2/32 dev lo; ip route add default via 192.0.2.2")
           machine.succeed("install -d -m700 /run/wg-keys; umask 077; wg genkey > /run/wg-keys/client; wg genkey > /run/wg-keys/peer; wg genpsk > /run/wg-keys/psk; wg pubkey < /run/wg-keys/client > /run/wg-keys/client.pub; wg pubkey < /run/wg-keys/peer > /run/wg-keys/peer.pub")
           if mode == "amnezia":
@@ -247,12 +250,45 @@ in
               machine.wait_until_succeeds("test -S /run/amneziawg/wg0.sock")
               machine.succeed(f"{uapi} configure-peer")
           else:
-              machine.succeed(f"{peer} ip link add wg0 type wireguard; {peer} wg set wg0 private-key /run/wg-keys/peer listen-port 51820 peer $(cat /run/wg-keys/client.pub) preshared-key /run/wg-keys/psk allowed-ips 10.77.0.2/32")
+              machine.succeed(f"{peer} ip link add wg0 type wireguard; {peer} wg set wg0 private-key /run/wg-keys/peer listen-port 51820 peer $(cat /run/wg-keys/client.pub) preshared-key /run/wg-keys/psk allowed-ips 10.77.0.2/32,fd77::2/128")
           machine.succeed(f"{peer} ip addr add 10.77.0.1/24 dev wg0; {peer} ip link set wg0 up")
-          machine.succeed(f"systemd-run --unit=wg-test-dns {peer} ${pkgs.dnsmasq}/bin/dnsmasq --keep-in-foreground --conf-file=/dev/null --no-resolv --no-hosts --bind-interfaces --listen-address=10.77.0.1 --address=/isolated.test/10.77.0.1")
+          # Model Windscribe's allowed on-node DNS range and a public tunneled destination.
+          machine.succeed(f"{peer} ip addr add 10.255.255.1/32 dev lo; {peer} ip addr add 203.0.113.99/32 dev lo")
+          if mode != "amnezia":
+              machine.succeed(f"{peer} ip -6 addr add fd77::1/64 dev wg0 nodad")
+          # Existing foreign rules must survive WG teardown. Tailscale's real priorities
+          # also make automatic WG priorities visibly wrong, even without credentials.
+          routing_table = 51821 if mode == "fallback" else 51820
+          if mode == "fallback":
+              machine.succeed("ip route add unreachable 203.0.113.7/32 table 51820")
+          for family in ["-4", "-6"]:
+              machine.succeed(f"ip {family} rule add pref 6000 lookup main suppress_prefixlength 0")
+              machine.succeed(f"ip {family} rule add pref 6001 fwmark 0x1234 lookup {routing_table}")
+              machine.succeed(f"ip {family} rule add pref 5210 fwmark 0x80000/0xff0000 lookup main")
+              machine.succeed(f"ip {family} rule add pref 5230 fwmark 0x80000/0xff0000 lookup default")
+              machine.succeed(f"ip {family} rule add pref 5250 fwmark 0x80000/0xff0000 unreachable")
+              machine.succeed(f"ip {family} rule add pref 5270 lookup 52")
+          if mode == "kernel":
+              # A synthetic tailnet, not a Tailscale daemon: exercises table 52, real
+              # packets and MagicDNS while requiring no account or external network.
+              tail = "ip netns exec tail-peer"
+              machine.succeed("ip netns add tail-peer; ip link add tailscale0 type veth peer name eth0 netns tail-peer")
+              machine.succeed("ip addr add 100.72.0.1/32 dev tailscale0; ip link set tailscale0 up")
+              machine.succeed(f"{tail} ip link set lo up; {tail} ip link set eth0 up; {tail} ip addr add 100.72.0.2/32 dev eth0; {tail} ip route add 100.72.0.1/32 dev eth0")
+              machine.succeed(f"{tail} ip addr add 100.100.100.100/32 dev lo; {tail} ip addr add 100.72.0.53/32 dev lo")
+              machine.succeed("ip route add 100.72.0.0/16 dev tailscale0 table 52; ip route add 100.100.100.100/32 dev tailscale0 table 52")
+              def scoped_rules(op):
+                  machine.succeed(f"ip rule {op} pref 5100 to 100.72.0.0/16 lookup 52; ip rule {op} pref 5101 to 100.100.100.100/32 lookup 52")
+              scoped_rules("add")
+              machine.succeed("resolvectl dns tailscale0 100.100.100.100 100.72.0.53; resolvectl domain tailscale0 '~tail.test'")
+              machine.succeed(f"systemd-run --unit=tail-test-dns {tail} ${pkgs.dnsmasq}/bin/dnsmasq --keep-in-foreground --conf-file=/dev/null --no-resolv --no-hosts --bind-interfaces --listen-address=100.100.100.100,100.72.0.53 --address=/tail.test/100.72.0.2")
+              machine.wait_for_unit("tail-test-dns.service")
+              machine.succeed("nft 'add table inet tailnet_guard; add chain inet tailnet_guard output { type filter hook output priority 10; policy accept; }; add rule inet tailnet_guard output ip daddr { 100.72.0.0/16, 100.100.100.100 } oifname != { \"tailscale0\", \"lo\" } counter drop'")
+          machine.succeed(f"systemd-run --unit=wg-test-dns {peer} ${pkgs.dnsmasq}/bin/dnsmasq --keep-in-foreground --conf-file=/dev/null --no-resolv --no-hosts --bind-interfaces --listen-address=10.255.255.1 --address=/isolated.test/203.0.113.99")
           machine.wait_for_unit("wg-test-dns.service")
           routes = machine.succeed("ip -4 route show table all")
           rules = machine.succeed("ip -4 rule show")
+          rules6 = machine.succeed("ip -6 rule show")
           # Packet counters change with traffic; compare rules, not counters.
           firewall = machine.succeed("nft --stateless list ruleset")
           dns_before = {name: resolved_property(manager, "Manager", name) for name in baseline}
@@ -279,12 +315,18 @@ in
                       actual = json.loads(machine.succeed(f"{uapi} {device}"))
                       assert {key: actual[key] for key in expected} == expected, actual
               machine.succeed("ip -4 addr show utun420 | grep -q '10.77.0.2/32'")
-              machine.succeed("ip -4 route show table 51820 | grep -q 'default dev utun420'")
-              machine.succeed("ip -4 rule show | grep -q 'not.*fwmark 0xca6c lookup 51820'")
+              machine.succeed(f"ip -4 route show table {routing_table} | grep -q 'default dev utun420'")
+              for family in (["-4"] if mode == "amnezia" else ["-4", "-6"]):
+                  installed = machine.succeed(f"ip {family} rule show")
+                  assert "5208:\tfrom all lookup main suppress_prefixlength 0" in installed, installed
+                  assert f"5209:\tnot from all fwmark 0xca6c lookup {routing_table}" in installed, installed
               machine.succeed("ip -4 route get 198.18.0.2 | grep -q 'via 192.0.2.2 dev wg-underlay'")
-              machine.succeed("ip -4 route get 203.0.113.99 | grep -q 'dev utun420 table 51820'")
+              machine.succeed(f"ip -4 route get 203.0.113.99 | grep -q 'dev utun420 table {routing_table}'")
               machine.succeed("nft list ruleset | grep -q 'chain wg_mangle_pre'")
               machine.wait_until_succeeds("ping -c 3 -W 2 10.77.0.1", timeout=datetime.timedelta(seconds=30))
+              if mode != "amnezia":
+                  machine.succeed(f"ip -6 route get 2001:db8::99 | grep -q 'dev utun420 table {routing_table}'")
+                  machine.succeed("ping -6 -c 3 -W 2 fd77::1")
               machine.succeed(f"{peer} ping -c 3 -W 2 10.77.0.2")
               machine.wait_until_succeeds(f"{client} wg-status", timeout=datetime.timedelta(seconds=30))
               # Independent evidence, never raw UAPI or wg showconf/dump (keys).
@@ -302,11 +344,76 @@ in
                   assert int(transfer[1]) > 0 and int(transfer[2]) > 0
               wg_index = machine.succeed("cat /sys/class/net/utun420/ifindex").strip()
               wg_link = json.loads(machine.succeed(f"busctl --json=short call org.freedesktop.resolve1 {manager} org.freedesktop.resolve1.Manager GetLink i {wg_index}"))["data"][0]
-              assert resolved_property(wg_link, "Link", "DNS") == [[2, [10, 77, 0, 1]]]
+              assert resolved_property(wg_link, "Link", "DNS") == [[2, [10, 255, 255, 1]]]
               assert resolved_property(wg_link, "Link", "Domains") == [[".", True]]
               machine.succeed("resolvectl flush-caches")
               answer = machine.succeed("resolvectl query isolated.test")
-              assert "10.77.0.1" in answer and "utun420" in answer, answer
+              assert "203.0.113.99" in answer and "utun420" in answer, answer
+              if mode == "kernel":
+                  # Exercise the packaged cgroup script without moving any processes.
+                  # It must not duplicate WG's priority-5208 rule in either family.
+                  machine.succeed(shlex.join([f"{scripts}/cgroups-up", "0xdecafbad", "192.0.2.2", "wg-underlay", "10.77.0.1", "utun420", "198.18.0.2", "0xcafecafe", "allow", "exclusive", "", "fd77::1", "wg-underlay", "", "0xca6c"]))
+                  for family in ["-4", "-6"]:
+                      assert machine.succeed(f"ip {family} rule show").count("5208:") == 1
+                  machine.succeed(f"{scripts}/cgroups-down")
+                  machine.succeed(f"{client} split-on && {client} connected && {client} firewall-on")
+                  # The real exclusion path still pins physical routes. Scoped rules
+                  # must win regardless of whether they were added before or after WG.
+                  machine.succeed("ip route show 100.72.0.0/16 | grep -q 'via 192.0.2.2 dev wg-underlay'")
+                  for readd in [False, True]:
+                      if readd:
+                          scoped_rules("del")
+                          scoped_rules("add")
+                      machine.succeed("ip route get 100.72.0.2 | grep -q 'dev tailscale0 table 52'")
+                      machine.succeed("ip route get 100.100.100.100 | grep -q 'dev tailscale0 table 52'")
+                      machine.succeed("ip route get 10.20.30.2 mark 0x80000 | grep -q 'dev wg-underlay'")
+                      machine.succeed("ip route get 203.0.113.99 | grep -q 'dev utun420 table 51820'")
+                      for destination in ["100.72.0.2", "10.20.30.2", "203.0.113.99"]:
+                          machine.succeed(f"ping -c 2 -W 2 {destination}")
+                  def query(server, tcp=False):
+                      transport = "+tcp" if tcp else "+notcp"
+                      return f"dig +time=1 +tries=1 +short {transport} @{server} peer.tail.test A"
+                  for tcp in [False, True]:
+                      assert machine.succeed(query("100.100.100.100", tcp)).strip() == "100.72.0.2"
+                      machine.fail(query("100.72.0.53", tcp))
+                  machine.succeed("resolvectl flush-caches")
+                  assert "100.72.0.2" in machine.succeed("resolvectl query peer.tail.test")
+                  assert machine.succeed("dig +time=1 +tries=1 +short @10.255.255.1 isolated.test").strip() == "203.0.113.99"
+                  # A lost table-52 route must not turn an exclusion into an underlay leak.
+                  machine.succeed("ip route del 100.72.0.0/16 table 52")
+                  machine.fail("ping -c 1 -W 1 100.72.0.2")
+                  guard = json.loads(machine.succeed("nft -j list chain inet tailnet_guard output"))
+                  assert any(expr.get("counter", {}).get("packets", 0) > 0 for item in guard["nftables"] for expr in item.get("rule", {}).get("expr", [])), guard
+                  machine.succeed("ip route add 100.72.0.0/16 dev tailscale0 table 52")
+                  # Remove the external guard to isolate DNS's own wrong-interface
+                  # protection. The peer also serves MagicDNS over the VPN path.
+                  machine.succeed(f"{peer} ip addr add 100.100.100.100/32 dev lo")
+                  machine.succeed(f"systemd-run --unit=wg-magic-dns {peer} ${pkgs.dnsmasq}/bin/dnsmasq --keep-in-foreground --conf-file=/dev/null --no-resolv --no-hosts --bind-interfaces --listen-address=100.100.100.100 --address=/tail.test/100.72.0.2")
+                  machine.wait_for_unit("wg-magic-dns.service")
+                  machine.succeed("nft flush chain inet tailnet_guard output; ip route del 100.100.100.100/32 table 52; ip route replace 100.100.100.100/32 dev utun420")
+                  for tcp in [False, True]:
+                      machine.fail(query("100.100.100.100", tcp))
+                  # Positive controls: both servers respond when DNS protection is
+                  # removed, so the failures above cannot be a missing listener.
+                  machine.succeed("nft flush chain inet windscribe dnsleaks")
+                  for tcp in [False, True]:
+                      assert machine.succeed(query("100.100.100.100", tcp)).strip() == "100.72.0.2"
+                      assert machine.succeed(query("100.72.0.53", tcp)).strip() == "100.72.0.2"
+                  machine.succeed("systemctl stop wg-magic-dns.service")
+                  machine.succeed("ip route replace 100.100.100.100/32 via 192.0.2.2 dev wg-underlay; ip route add 100.100.100.100/32 dev tailscale0 table 52")
+                  machine.succeed("nft 'add rule inet tailnet_guard output ip daddr { 100.72.0.0/16, 100.100.100.100 } oifname != { \"tailscale0\", \"lo\" } counter drop'")
+                  # Reapply via the production connect lifecycle, not handcrafted DNS rules.
+                  machine.succeed(f"{client} connected && {client} firewall-on")
+                  assert machine.succeed(query("100.100.100.100")).strip() == "100.72.0.2"
+                  machine.fail(query("100.72.0.53"))
+                  # Ordinary traffic must still fail closed if forced onto the underlay.
+                  machine.succeed(f"{peer} ip addr add 198.18.0.3/32 dev lo; ip route add 198.18.0.3/32 via 192.0.2.2")
+                  machine.fail("ping -c 1 -W 1 198.18.0.3")
+                  machine.succeed(f"{client} firewall-off")
+                  machine.succeed("ping -c 1 -W 1 198.18.0.3 && ip route del 198.18.0.3/32")
+                  machine.succeed(f"{client} disconnected && {client} split-off && {client} firewall-off")
+                  # The legacy bound-route teardown removes the existing default too.
+                  machine.succeed("ip route replace default via 192.0.2.2 dev wg-underlay")
           finally:
               machine.succeed(f"{client} wg-stop")
               machine.succeed("rm -rf /run/wg-keys")
@@ -315,6 +422,7 @@ in
           machine.fail(f"pgrep -f '^{amneziawg} -f utun420$'")
           assert machine.succeed("ip -4 route show table all") == routes
           assert machine.succeed("ip -4 rule show") == rules
+          assert machine.succeed("ip -6 rule show") == rules6
           machine.fail("nft list ruleset | grep -E 'chain wg_(raw|mangle)_'")
           firewall_after = machine.succeed("nft --stateless list ruleset")
           # The helper retains its empty shared table after the first connection.
@@ -325,6 +433,14 @@ in
           machine.succeed(f"{client} wg-stop")
           machine.succeed("test ! -e /run/amneziawg/utun420.sock && ! ip link show utun420")
           machine.fail(f"pgrep -f '^{amneziawg} -f utun420$'")
+          for family in ["-4", "-6"]:
+              for priority in [5210, 5230, 5250, 5270, 6000, 6001]:
+                  machine.succeed(f"ip {family} rule del pref {priority}")
+          if mode == "fallback":
+              machine.succeed("ip route del unreachable 203.0.113.7/32 table 51820")
+          if mode == "kernel":
+              scoped_rules("del")
+              machine.succeed("systemctl stop tail-test-dns.service; nft delete table inet tailnet_guard; ip link del tailscale0; ip netns del tail-peer")
           if mode == "amnezia":
               machine.succeed("systemctl is-active awg-test-peer.service")
               machine.succeed("systemctl stop awg-test-peer.service")
