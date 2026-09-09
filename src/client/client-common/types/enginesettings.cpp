@@ -1,7 +1,7 @@
 #include "enginesettings.h"
 
+#include <QFileInfo>
 #include <QJsonDocument>
-#include <filesystem>
 
 #include "types/global_consts.h"
 #include "utils/languagesutil.h"
@@ -443,9 +443,8 @@ void EngineSettingsData::validate()
     }
 
     if (!customOvpnConfigsPath.isEmpty()) {
-        std::error_code ec;
-        std::filesystem::path p(customOvpnConfigsPath.toStdString());
-        if (!p.is_absolute() || !std::filesystem::is_directory(p, ec)) {
+        const QFileInfo info(customOvpnConfigsPath);
+        if (!Utils::isFullyQualifiedPath(customOvpnConfigsPath) || !info.isDir()) {
             qCWarning(LOG_BASIC) << "EngineSettings: customOvpnConfigsPath not a valid absolute directory, clearing";
             customOvpnConfigsPath.clear();
         }

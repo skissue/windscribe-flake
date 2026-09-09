@@ -198,14 +198,16 @@ const QString Utils::filenameQuotedDouble(const QString &filename)
     return "\"" + filename + "\"";
 }
 
-bool Utils::copyDirectoryRecursive(QString fromDir, QString toDir)
+bool Utils::isFullyQualifiedPath(const QString &path)
 {
-    const auto opts = std::filesystem::copy_options::recursive |
-                      std::filesystem::copy_options::copy_symlinks;
-    std::error_code ec;
-    std::filesystem::copy(fromDir.toStdString(), toDir.toStdString(), opts, ec);
-
-    return !ec;
+#ifdef Q_OS_WIN
+    // QFileInfo::isAbsolute() also accepts drive-relative (C:foo) and root-relative (\foo) paths, which resolve
+    // against the current directory; only a drive root or a UNC share is fully qualified.
+    const bool driveRooted = path.size() >= 3 && path[0].isLetter() && path[1] == ':' && (path[2] == '/' || path[2] == '\\');
+    return driveRooted || path.startsWith("//") || path.startsWith("\\\\");
+#else
+    return path.startsWith('/');
+#endif
 }
 
 bool Utils::removeDirectory(const QString dir)

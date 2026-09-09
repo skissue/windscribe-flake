@@ -5,6 +5,7 @@
 #include <QGraphicsSceneMouseEvent>
 #include <QCoreApplication>
 #if defined(Q_OS_LINUX)
+#include <filesystem>
 #include <unistd.h>
 #endif
 

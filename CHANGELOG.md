@@ -1,3 +1,8 @@
+2.24.13 (08/09/2026)
+Windows:
+   * Fixed app crash on startup when the user profile path contains non-ASCII characters. #1992
+
+
 2.24.12 (31/08/2026)
 macOS:
    * Fixed local privilege escalation vulnerability via a race condition in the staged updater bundle. #1987
