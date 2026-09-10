@@ -85,6 +85,7 @@ up_loopback() {
   echo "DNS=" >> "$WINDSCRIBE_SYSTEMD_CONFIG_FILE"
   echo "DNS=$1" >> "$WINDSCRIBE_SYSTEMD_CONFIG_FILE"
   echo "Domains=~." >> "$WINDSCRIBE_SYSTEMD_CONFIG_FILE"
+  echo "DNSOverTLS=no" >> "$WINDSCRIBE_SYSTEMD_CONFIG_FILE"
 
   systemctl restart systemd-resolved
 }
@@ -143,6 +144,8 @@ up() {
   done < <(dhcp_settings)
 
   if [[ "${#dns_servers[*]}" -gt 0 ]]; then
+    # Tunnel DNS uses the VPN's encryption, not the host's global DoT policy.
+    busctl_call SetLinkDNSOverTLS 'is' "$if_index" "no" || return $?
     busctl_params=("$if_index" "$dns_server_count" "${dns_servers[@]}")
     info "SetLinkDNS(${busctl_params[*]})"
     busctl_call SetLinkDNS 'ia(iay)' "${busctl_params[@]}" || return $?

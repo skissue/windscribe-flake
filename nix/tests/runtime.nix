@@ -61,6 +61,7 @@ in
           DNS = "192.0.2.53";
           Domains = "baseline.invalid";
           FallbackDNS = "192.0.2.54";
+          DNSOverTLS = "yes";
         };
       };
       systemd.services.windscribe-helper = {
@@ -173,20 +174,26 @@ in
       other_index = machine.succeed("cat /sys/class/net/ws-other/ifindex").strip()
       link = json.loads(machine.succeed(f"busctl --json=short call org.freedesktop.resolve1 {manager} org.freedesktop.resolve1.Manager GetLink i {index}"))["data"][0]
       other_link = json.loads(machine.succeed(f"busctl --json=short call org.freedesktop.resolve1 {manager} org.freedesktop.resolve1.Manager GetLink i {other_index}"))["data"][0]
-      baseline = {name: resolved_property(manager, "Manager", name) for name in ["DNS", "Domains", "FallbackDNS"]}
+      baseline = {name: resolved_property(manager, "Manager", name) for name in ["DNS", "Domains", "FallbackDNS", "DNSOverTLS"]}
+      assert baseline["DNSOverTLS"] == "yes"
+      assert resolved_property(link, "Link", "DNSOverTLS") == "yes"
       machine.succeed("cp /etc/systemd/resolved.conf /tmp/resolved-original")
 
       with subtest("per-link resolved DNS and domain round trip with an empty environment"):
           machine.succeed("resolvectl dns ws-other 198.51.100.53 && resolvectl domain ws-other other.invalid")
-          other = {name: resolved_property(other_link, "Link", name) for name in ["DNS", "Domains"]}
+          other = {name: resolved_property(other_link, "Link", name) for name in ["DNS", "Domains", "DNSOverTLS"]}
+          assert other["DNSOverTLS"] == "yes"
           dns_script("up", "DNS 192.0.2.1", "DNS 192.0.2.2", "DOMAIN vpn.invalid", "DOMAIN-SEARCH search.invalid", "DOMAIN-ROUTE .")
           assert resolved_property(link, "Link", "DNS") == [[2, [192, 0, 2, 1]], [2, [192, 0, 2, 2]]]
           assert resolved_property(link, "Link", "Domains") == [["vpn.invalid", False], ["search.invalid", False], [".", True]]
+          assert resolved_property(link, "Link", "DNSOverTLS") == "no"
+          assert resolved_property(manager, "Manager", "DNSOverTLS") == "yes"
           for name, value in other.items():
               assert resolved_property(other_link, "Link", name) == value
           dns_script("down")
           assert resolved_property(link, "Link", "DNS") == []
           assert resolved_property(link, "Link", "Domains") == []
+          assert resolved_property(link, "Link", "DNSOverTLS") == "yes"
           for name, value in other.items():
               assert resolved_property(other_link, "Link", name) == value
           # Manager DNS/Domains aggregate per-link entries; remove the unrelated fixture first.
@@ -207,6 +214,7 @@ in
 
       with subtest("loopback resolved override and restoration"):
           dns_script("up", "DNS 127.0.0.1", "DOMAIN-ROUTE .")
+          assert resolved_property(manager, "Manager", "DNSOverTLS") == "no"
           assert [entry[-1] for entry in resolved_property(manager, "Manager", "DNS")] == [[127, 0, 0, 1]]
           assert any(entry[-2:] == [".", True] for entry in resolved_property(manager, "Manager", "Domains"))
           assert resolved_property(manager, "Manager", "FallbackDNS") == baseline["FallbackDNS"]
@@ -219,6 +227,7 @@ in
 
       with subtest("loopback teardown after the tunnel interface disappears"):
           dns_script("up", "DNS 127.0.0.1", "DOMAIN-ROUTE .")
+          assert resolved_property(manager, "Manager", "DNSOverTLS") == "no"
           machine.succeed("ip link del ws-test")
           dns_script("down")
           for name, value in baseline.items():
@@ -280,6 +289,7 @@ in
               machine.succeed(f"{tail} ip addr add 100.100.100.100/32 dev lo; {tail} ip addr add 100.72.0.53/32 dev lo")
               machine.succeed("ip route add 100.72.0.0/16 dev tailscale0 table 52; ip route add 100.100.100.100/32 dev tailscale0 table 52; ip -6 route add fd7a:115c:a1e0::/64 dev tailscale0 table 52")
               machine.succeed("resolvectl dns tailscale0 100.100.100.100 100.72.0.53; resolvectl domain tailscale0 '~tail.test'")
+              machine.succeed("resolvectl dnsovertls tailscale0 no")
               machine.succeed(f"systemd-run --unit=tail-test-dns {tail} ${pkgs.dnsmasq}/bin/dnsmasq --keep-in-foreground --conf-file=/dev/null --no-resolv --no-hosts --bind-interfaces --listen-address=100.100.100.100,100.72.0.53 --address=/tail.test/100.72.0.2")
               machine.wait_for_unit("tail-test-dns.service")
               machine.succeed("nft 'add table inet tailnet_guard; add chain inet tailnet_guard output { type filter hook output priority 10; policy accept; }; add rule inet tailnet_guard output ip daddr { 100.72.0.0/16, 100.100.100.100 } oifname != { \"tailscale0\", \"lo\" } counter drop'")
@@ -364,6 +374,8 @@ in
               wg_link = json.loads(machine.succeed(f"busctl --json=short call org.freedesktop.resolve1 {manager} org.freedesktop.resolve1.Manager GetLink i {wg_index}"))["data"][0]
               assert resolved_property(wg_link, "Link", "DNS") == [[2, [10, 255, 255, 1]]]
               assert resolved_property(wg_link, "Link", "Domains") == [[".", True]]
+              assert resolved_property(wg_link, "Link", "DNSOverTLS") == "no"
+              assert resolved_property(manager, "Manager", "DNSOverTLS") == "yes"
               machine.succeed("resolvectl flush-caches")
               answer = machine.succeed("resolvectl query isolated.test")
               assert "203.0.113.99" in answer and "utun420" in answer, answer
