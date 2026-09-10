@@ -74,13 +74,15 @@ bool SplitTunneling::updateState()
         }
 
         if (isExclude_) {
-            // Exclude mode: host pins for excluded apps route via the default adapter.
+            // Exclude mode: non-WG destinations are pinned to the default adapter;
+            // WG destinations use policy jumps so later host policy can route them.
             hostnamesManager_.enable(connectStatus_.defaultAdapter.gatewayIp,
                                      connectStatus_.defaultAdapter.gatewayIpV6,
                                      connectStatus_.defaultAdapter.adapterIp,
                                      connectStatus_.defaultAdapter.adapterIpV6,
                                      connectStatus_.defaultAdapter.adapterName,
-                                     connectStatus_.defaultAdapter.adapterNameV6);
+                                     connectStatus_.defaultAdapter.adapterNameV6,
+                                     connectStatus_.protocol == kCmdProtocolWireGuard);
         } else {
             // Inclusive mode: host pins for included apps route via the VPN adapter.
             // The adapter IPs are also forwarded so HostnamesManager/IpRoutes can

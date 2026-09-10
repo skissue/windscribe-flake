@@ -19,10 +19,6 @@
 namespace
 {
 
-// Reserved for Windscribe, after scoped host exceptions and before Tailscale's 5210+ rules.
-constexpr const char *kMainRulePriority = "5208";
-constexpr const char *kVpnRulePriority = "5209";
-
 struct CmdEntry {
     std::string program;
     std::vector<std::string> args;
@@ -44,22 +40,118 @@ bool RunBlockingCommands(const std::vector<CmdEntry> &cmdlist)
     return true;
 }
 
+std::string trimNewlines(std::string output)
+{
+    while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) {
+        output.pop_back();
+    }
+    return output;
+}
+
+std::string ruleSelector(const std::string &line)
+{
+    const auto separator = line.find(':');
+    const std::string selector = separator == std::string::npos ? line : line.substr(separator + 1);
+    const auto first = selector.find_first_not_of(" \t");
+    return first == std::string::npos ? std::string() : selector.substr(first);
+}
+
+bool ensureRule(const char *family, uint32_t priority, const std::string &expected,
+                const std::vector<std::string> &selector, bool *added)
+{
+    std::string output;
+    if (Utils::executeCommand("ip", {family, "rule", "show", "priority", std::to_string(priority)},
+                              &output, true) != 0) {
+        spdlog::error("Failed to inspect WireGuard policy priority {}: {}", priority, output);
+        return false;
+    }
+    output = trimNewlines(output);
+    if (!output.empty()) {
+        if (output.find('\n') == std::string::npos && ruleSelector(output) == expected) {
+            *added = false;
+            return true;
+        }
+        spdlog::error("Cannot install WireGuard policy rule at priority {}: occupied by {}", priority, output);
+        return false;
+    }
+
+    std::vector<std::string> args = {family, "rule", "add", "priority", std::to_string(priority)};
+    args.insert(args.end(), selector.begin(), selector.end());
+    output.clear();
+    if (Utils::executeCommand("ip", args, &output, true) != 0) {
+        spdlog::error("Failed to install WireGuard policy rule at priority {}: {}", priority, output);
+        return false;
+    }
+    *added = true;
+    return true;
+}
+
+void deleteRule(const char *family, uint32_t priority, const std::vector<std::string> &selector)
+{
+    std::vector<std::string> args = {family, "rule", "delete", "priority", std::to_string(priority)};
+    args.insert(args.end(), selector.begin(), selector.end());
+    std::string output;
+    if (Utils::executeCommand("ip", args, &output, true) != 0
+        && output.find("No such file or directory") == std::string::npos) {
+        spdlog::warn("Failed to delete WireGuard policy rule: {}", output);
+    }
+}
+
+bool installFwmarkRulesForFamily(const char *family, uint32_t fwmark, uint32_t routingTable)
+{
+    const std::string fwmarkStr = std::to_string(fwmark);
+    const std::string tableStr = std::to_string(routingTable);
+    bool landingAdded = false;
+    bool mainAdded = false;
+    bool vpnAdded = false;
+
+    // The landing rule must exist before any destination jump can target it.
+    if (!ensureRule(family, marks::kWireGuardLandingRulePriority, "from all nop", {"nop"}, &landingAdded)
+        || !ensureRule(family, marks::kWireGuardMainRulePriority,
+                       "from all lookup main suppress_prefixlength 0",
+                       {"table", "main", "suppress_prefixlength", "0"}, &mainAdded)
+        || !ensureRule(family, marks::kWireGuardVpnRulePriority,
+                       "not from all fwmark 0x" + [] (uint32_t value) {
+                           std::ostringstream stream;
+                           stream << std::hex << value;
+                           return stream.str();
+                       }(fwmark) + " lookup " + tableStr,
+                       {"not", "fwmark", fwmarkStr, "table", tableStr}, &vpnAdded)) {
+        if (vpnAdded) {
+            deleteRule(family, marks::kWireGuardVpnRulePriority,
+                       {"not", "fwmark", fwmarkStr, "table", tableStr});
+        }
+        if (mainAdded) {
+            deleteRule(family, marks::kWireGuardMainRulePriority,
+                       {"table", "main", "suppress_prefixlength", "0"});
+        }
+        if (landingAdded) {
+            deleteRule(family, marks::kWireGuardLandingRulePriority, {"nop"});
+        }
+        return false;
+    }
+    return true;
+}
+
 // Tear down the per-family policy-routing rules previously added by enableRouting.
 // Match only our reserved priorities and selectors; never sweep foreign main-table rules.
 void deleteFwmarkRulesForFamily(const char *family, uint32_t routingTable)
 {
-    const std::vector<std::vector<std::string>> rules = {
-        {family, "rule", "delete", "priority", kVpnRulePriority, "not", "fwmark",
-         std::to_string(marks::kWireGuardFwMark), "table", std::to_string(routingTable)},
-        {family, "rule", "delete", "priority", kMainRulePriority,
-         "table", "main", "suppress_prefixlength", "0"},
-    };
-    for (const auto &args : rules) {
-        std::string output;
-        if (Utils::executeCommand("ip", args, &output) != 0
-            && output.find("No such file or directory") == std::string::npos) {
-            spdlog::warn("Failed to delete WireGuard policy rule: {}", output);
-        }
+    deleteRule(family, marks::kWireGuardVpnRulePriority,
+               {"not", "fwmark", std::to_string(marks::kWireGuardFwMark),
+                "table", std::to_string(routingTable)});
+    deleteRule(family, marks::kWireGuardMainRulePriority,
+               {"table", "main", "suppress_prefixlength", "0"});
+
+    std::string jumps;
+    const int rc = Utils::executeCommand("ip", {family, "rule", "show", "priority",
+                                                std::to_string(marks::kWireGuardExcludeRulePriority)},
+                                         &jumps, true);
+    if (rc == 0 && trimNewlines(jumps).empty()) {
+        deleteRule(family, marks::kWireGuardLandingRulePriority, {"nop"});
+    } else {
+        spdlog::warn("Retaining WireGuard policy landing rule while exclusion jumps still exist: {}",
+                     trimNewlines(jumps));
     }
 }
 
@@ -196,24 +288,26 @@ bool WireGuardAdapter::enableRouting(const std::vector<std::string> &allowedIps,
         const std::string canonical = r.toString();
         // The fwmark is fixed (matches the kill-switch firewall and the WG socket mark); only the
         // routing-table id may vary. The `not fwmark` rule selects the table for unmarked packets.
-        const std::string fwmarkStr = std::to_string(fwmark);
         const std::string tableStr = std::to_string(routingTable);
 
         if (r.prefixLength() == 0) {
+            spdlog::debug("WireGuardAdapter::enableRouting: \"{}\" -> default-route bypass via fwmark {} table {}",
+                          canonical, fwmark, routingTable);
+
+            if (!installFwmarkRulesForFamily(family, fwmark, routingTable)) {
+                return false;
+            }
+            // Record ownership only after the complete fixed block was acquired. A
+            // rejected foreign priority must never make disableRouting delete it.
             if (r.isV4()) {
                 has_default_route_v4_ = true;
             } else {
                 has_default_route_v6_ = true;
             }
-
-            spdlog::debug("WireGuardAdapter::enableRouting: \"{}\" -> default-route bypass via fwmark {} table {}",
-                          canonical, fwmark, routingTable);
-
             cmdlist.push_back({"ip", {family, "route", "add", canonical, "dev", getName(), "table", tableStr}});
-            cmdlist.push_back({"ip", {family, "rule", "add", "priority", kVpnRulePriority, "not", "fwmark", fwmarkStr, "table", tableStr}});
-            cmdlist.push_back({"ip", {family, "rule", "add", "priority", kMainRulePriority, "table", "main", "suppress_prefixlength", "0"}});
 
             if (!RunBlockingCommands(cmdlist)) {
+                deleteFwmarkRulesForFamily(family, routingTable);
                 return false;
             }
             cmdlist.clear();

@@ -36,7 +36,8 @@ public:
                 const types::IpAddress &adapterIp,
                 const types::IpAddress &adapterIpV6,
                 const std::string &adapterName,
-                const std::string &adapterNameV6);
+                const std::string &adapterNameV6,
+                bool useWireGuardPolicyRules = false);
     void disable();
 
     // Dual-stack: ips holds IPv4 and/or IPv6 ranges; family is dispatched by isV4()/isV6().
@@ -60,6 +61,7 @@ private:
     types::IpAddress adapterIpV6_;
     std::string adapterName_;
     std::string adapterNameV6_;
+    bool useWireGuardPolicyRules_ = false;
 
     void dnsResolverCallback(std::map<std::string, DnsResolver::HostInfo> hostInfos);
 };

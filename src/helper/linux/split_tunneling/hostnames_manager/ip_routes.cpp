@@ -1,10 +1,12 @@
 #include "ip_routes.h"
 
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 #include <spdlog/spdlog.h>
+#include "../../network_marks.h"
 #include "../../utils.h"
 
 namespace {
@@ -78,6 +80,33 @@ bool useDevOnlyRoute(const types::IpAddress &gw, const types::IpAddress &adapter
     return gw == adapterIp || (!gw.isValid() && !iface.empty() && adapterIp.isV6());
 }
 
+std::string trimNewlines(std::string output)
+{
+    while (!output.empty() && (output.back() == '\n' || output.back() == '\r')) {
+        output.pop_back();
+    }
+    return output;
+}
+
+std::string policyRuleSelector(const types::IpAddressRange &ip, const std::string &landing)
+{
+    std::string selector = "from all";
+    const uint8_t hostPrefix = ip.isV6() ? 128 : 32;
+    if (ip.prefixLength() != 0) {
+        selector += " to ";
+        selector += ip.prefixLength() == hostPrefix ? ip.address().toString() : ip.toString();
+    }
+    return selector + " goto " + landing;
+}
+
+std::string ruleSelector(const std::string &line)
+{
+    const auto separator = line.find(':');
+    const std::string selector = separator == std::string::npos ? line : line.substr(separator + 1);
+    const auto first = selector.find_first_not_of(" \t");
+    return first == std::string::npos ? std::string() : selector.substr(first);
+}
+
 } // namespace
 
 void IpRoutes::setIps(const types::IpAddress &gatewayV4,
@@ -86,7 +115,8 @@ void IpRoutes::setIps(const types::IpAddress &gatewayV4,
                       const types::IpAddress &adapterIpV6,
                       const std::string &adapterName,
                       const std::string &adapterNameV6,
-                      const std::vector<types::IpAddressRange> &ips)
+                      const std::vector<types::IpAddressRange> &ips,
+                      bool useWireGuardPolicyRules)
 {
     std::lock_guard<std::recursive_mutex> guard(mutex_);
 
@@ -126,6 +156,7 @@ void IpRoutes::setIps(const types::IpAddress &gatewayV4,
         if (rd.defaultRouteIp != gwForFamily
             || rd.interfaceName != ifaceForFamily
             || rd.gatewayIsLocal != gwIsLocalNow
+            || rd.wireGuardPolicyRule != useWireGuardPolicyRules
             || ipsSet.find(it->first) == ipsSet.end()) {
             ipsDelete.insert(it->first);
         }
@@ -143,7 +174,10 @@ void IpRoutes::setIps(const types::IpAddress &gatewayV4,
         // entry so a later cycle (or clear()) retries the delete instead of orphaning
         // a live kernel route.
         const bool stillWanted = ipsSet.find(*it) != ipsSet.end();
-        if (deleteRoute(fr->second) || stillWanted) {
+        const bool deleted = fr->second.wireGuardPolicyRule
+                                 ? deletePolicyRule(fr->second)
+                                 : deleteRoute(fr->second);
+        if (deleted || (stillWanted && !fr->second.wireGuardPolicyRule)) {
             activeRoutes_.erase(fr);
         }
     }
@@ -167,7 +201,7 @@ void IpRoutes::setIps(const types::IpAddress &gatewayV4,
         // Skip only when there is neither a usable gateway nor a dev-only fallback: e.g. a v6
         // destination on a v4-only host (no v6 gateway, no v6 address), or inclusive-mode
         // OpenVPN-on-Linux which is v4-only.
-        if (!gw.isValid() && !gwIsLocal) {
+        if (!useWireGuardPolicyRules && !gw.isValid() && !gwIsLocal) {
             spdlog::warn("IpRoutes::setIps(), no {} gateway or interface for destination {}",
                          it->isV6() ? "IPv6" : "IPv4", it->toString());
             continue;
@@ -178,6 +212,7 @@ void IpRoutes::setIps(const types::IpAddress &gatewayV4,
         rd.defaultRouteIp = gw;
         rd.interfaceName = ifaceForFamily;
         rd.gatewayIsLocal = gwIsLocal;
+        rd.wireGuardPolicyRule = useWireGuardPolicyRules;
 
         // Negative cache: if this exact route was already rejected by the kernel, don't
         // re-spawn `ip` (or re-log the same error) on this refresh. The retry only fires
@@ -193,7 +228,8 @@ void IpRoutes::setIps(const types::IpAddress &gatewayV4,
         // host-pin left over by a crashed/restarted/upgraded helper, which would have
         // made plain `ip route add` fail with "File exists"). Recording on success
         // therefore also adopts such stale routes into tracking so teardown removes them.
-        if (addRoute(rd)) {
+        const bool added = rd.wireGuardPolicyRule ? addPolicyRule(rd) : addRoute(rd);
+        if (added) {
             activeRoutes_[*it] = rd;
             failedRoutes_.erase(*it);
         } else {
@@ -208,7 +244,8 @@ bool IpRoutes::sameRouteParams(const RouteDescr &a, const RouteDescr &b)
 {
     return a.defaultRouteIp == b.defaultRouteIp
         && a.interfaceName == b.interfaceName
-        && a.gatewayIsLocal == b.gatewayIsLocal;
+        && a.gatewayIsLocal == b.gatewayIsLocal
+        && a.wireGuardPolicyRule == b.wireGuardPolicyRule;
 }
 
 void IpRoutes::clear()
@@ -220,7 +257,10 @@ void IpRoutes::clear()
     // by NetworkManager, …) so the next clear()/setIps() retries them instead of leaving
     // a live but untracked kernel route behind.
     for (auto it = activeRoutes_.begin(); it != activeRoutes_.end();) {
-        if (deleteRoute(it->second)) {
+        const bool deleted = it->second.wireGuardPolicyRule
+                                 ? deletePolicyRule(it->second)
+                                 : deleteRoute(it->second);
+        if (deleted) {
             it = activeRoutes_.erase(it);
         } else {
             ++it;
@@ -268,4 +308,108 @@ bool IpRoutes::deleteRoute(const RouteDescr &rd)
     }
     spdlog::error("{} failed (rc={}): {}", cmd.second, rc, output);
     return false;
+}
+
+bool IpRoutes::addPolicyRule(const RouteDescr &rd)
+{
+    const char *family = rd.ip.isV6() ? "-6" : "-4";
+    const std::string priority = std::to_string(marks::kWireGuardExcludeRulePriority);
+    const std::string landing = std::to_string(marks::kWireGuardLandingRulePriority);
+
+    std::string landingRule;
+    if (runIpCmd({family, "rule", "show", "priority", landing}, &landingRule) != 0
+        || ruleSelector(trimNewlines(landingRule)) != "from all nop") {
+        spdlog::warn("IpRoutes::setIps(), no WireGuard policy landing rule for destination {}",
+                     rd.ip.toString());
+        return false;
+    }
+
+    // Every rule already at this reserved priority must be one we currently track.
+    // This permits several excluded destinations while rejecting foreign occupancy.
+    std::string existing;
+    if (runIpCmd({family, "rule", "show", "priority", priority}, &existing) != 0) {
+        spdlog::error("Failed to inspect WireGuard exclusion priority {}: {}", priority, existing);
+        return false;
+    }
+    std::set<std::string> expected;
+    for (const auto &entry : activeRoutes_) {
+        if (entry.second.wireGuardPolicyRule && entry.first.family() == rd.ip.family()) {
+            expected.insert(policyRuleSelector(entry.first, landing));
+        }
+    }
+    const std::string candidate = policyRuleSelector(rd.ip, landing);
+    bool candidateExists = false;
+    std::istringstream lines(existing);
+    std::string line;
+    while (std::getline(lines, line)) {
+        const std::string normalized = ruleSelector(line);
+        if (normalized == candidate && !candidateExists) {
+            candidateExists = true;
+        } else if (expected.erase(normalized) == 0) {
+            spdlog::error("Cannot install WireGuard exclusion rule at priority {}: occupied by {}",
+                          priority, line);
+            return false;
+        }
+    }
+    if (!expected.empty()) {
+        spdlog::error("Tracked WireGuard exclusion rule disappeared before adding {}", rd.ip.toString());
+        return false;
+    }
+    if (candidateExists) {
+        return true;
+    }
+
+    const std::vector<std::string> args = {family, "rule", "add", "priority", priority,
+                                           "to", rd.ip.toString(), "goto", landing};
+    spdlog::info("cmd: ip {} rule add priority {} to {} goto {}", family, priority, rd.ip.toString(), landing);
+    std::string output;
+    const int rc = runIpCmd(args, &output);
+    if (rc != 0) {
+        spdlog::error("WireGuard exclusion rule add failed (rc={}): {}", rc, output);
+        return false;
+    }
+    return true;
+}
+
+bool IpRoutes::deletePolicyRule(const RouteDescr &rd)
+{
+    const char *family = rd.ip.isV6() ? "-6" : "-4";
+    const std::string priority = std::to_string(marks::kWireGuardExcludeRulePriority);
+    const std::string landing = std::to_string(marks::kWireGuardLandingRulePriority);
+    const std::vector<std::string> args = {family, "rule", "delete", "priority", priority,
+                                           "to", rd.ip.toString(), "goto", landing};
+    spdlog::info("cmd: ip {} rule delete priority {} to {} goto {}", family, priority, rd.ip.toString(), landing);
+    std::string output;
+    const int rc = runIpCmd(args, &output);
+    if (rc == 0 || output.find("No such file or directory") != std::string::npos) {
+        deleteUnusedPolicyLandingRule(rd.ip.isV6());
+        return true;
+    }
+    spdlog::error("WireGuard exclusion rule delete failed (rc={}): {}", rc, output);
+    return false;
+}
+
+void IpRoutes::deleteUnusedPolicyLandingRule(bool isV6)
+{
+    const char *family = isV6 ? "-6" : "-4";
+    std::string output;
+    if (runIpCmd({family, "rule", "show", "priority",
+                  std::to_string(marks::kWireGuardExcludeRulePriority)}, &output) != 0
+        || !trimNewlines(output).empty()) {
+        return;
+    }
+    // In normal teardown the fixed WG block still exists and owns its landing rule.
+    // If the tunnel failed first, disableRouting removed 4202/4203 but retained 4204;
+    // removing the final destination jump now completes that deferred cleanup.
+    for (uint32_t priority : {marks::kWireGuardMainRulePriority, marks::kWireGuardVpnRulePriority}) {
+        if (runIpCmd({family, "rule", "show", "priority", std::to_string(priority)}, &output) != 0
+            || !trimNewlines(output).empty()) {
+            return;
+        }
+    }
+    const int rc = runIpCmd({family, "rule", "delete", "priority",
+                             std::to_string(marks::kWireGuardLandingRulePriority), "nop"}, &output);
+    if (rc != 0 && output.find("No such file or directory") == std::string::npos) {
+        spdlog::warn("Failed to delete deferred WireGuard landing rule: {}", output);
+    }
 }

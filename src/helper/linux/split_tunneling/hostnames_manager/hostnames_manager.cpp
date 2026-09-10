@@ -17,7 +17,8 @@ void HostnamesManager::enable(const types::IpAddress &gatewayIp,
                               const types::IpAddress &adapterIp,
                               const types::IpAddress &adapterIpV6,
                               const std::string &adapterName,
-                              const std::string &adapterNameV6)
+                              const std::string &adapterNameV6,
+                              bool useWireGuardPolicyRules)
 {
     {
         std::lock_guard<std::recursive_mutex> guard(mutex_);
@@ -28,8 +29,10 @@ void HostnamesManager::enable(const types::IpAddress &gatewayIp,
         adapterIpV6_ = adapterIpV6;
         adapterName_ = adapterName;
         adapterNameV6_ = adapterNameV6;
+        useWireGuardPolicyRules_ = useWireGuardPolicyRules;
         ipRoutes_.clear();
-        ipRoutes_.setIps(gatewayIp_, gatewayIpV6_, adapterIp_, adapterIpV6_, adapterName_, adapterNameV6_, ipsLatest_);
+        ipRoutes_.setIps(gatewayIp_, gatewayIpV6_, adapterIp_, adapterIpV6_, adapterName_, adapterNameV6_,
+                         ipsLatest_, useWireGuardPolicyRules_);
         // Connect path: setSplitTunnelingEnabled() (and the resolveDomains callback below) apply right
         // after, so defer to avoid a wasted intermediate transaction.
         FirewallController::instance().setSplitTunnelIpExceptions(ipsLatest_, /*applyNow=*/false);
@@ -95,7 +98,8 @@ void HostnamesManager::dnsResolverCallback(std::map<std::string, DnsResolver::Ho
     hostsIps.insert(hostsIps.end(), ipsLatest_.begin(), ipsLatest_.end());
 
     if (isEnabled_) {
-        ipRoutes_.setIps(gatewayIp_, gatewayIpV6_, adapterIp_, adapterIpV6_, adapterName_, adapterNameV6_, hostsIps);
+        ipRoutes_.setIps(gatewayIp_, gatewayIpV6_, adapterIp_, adapterIpV6_, adapterName_, adapterNameV6_,
+                         hostsIps, useWireGuardPolicyRules_);
         // Async path (not followed by setSplitTunnelingEnabled), so apply now (the default).
         FirewallController::instance().setSplitTunnelIpExceptions(hostsIps);
     }

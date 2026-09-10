@@ -35,12 +35,6 @@ void RoutesManager::updateState(const ConnectStatus &connectStatus, bool isSplit
                     //   vpnRoutes_.add(types::IpAddress("::"), connectStatus.vpnAdapter.gatewayIpV6, 1);
                     //   vpnRoutes_.add(types::IpAddress("8000::"), connectStatus.vpnAdapter.gatewayIpV6, 1);
                     boundRoute_.create(connectStatus.defaultAdapter.gatewayIp, connectStatus.vpnAdapter.adapterName);
-                } else if (connectStatus.protocol == kCmdProtocolWireGuard) {
-                    // add wireguard default routes
-                    // (WG v6 default-route bypass is handled via fwmark tables in WireGuardAdapter::enableRouting,
-                    //  not via routes_manager.)
-                    vpnRoutes_.addWithInterface(types::IpAddress("0.0.0.0"), connectStatus.vpnAdapter.adapterName, 1);
-                    vpnRoutes_.addWithInterface(types::IpAddress("128.0.0.0"), connectStatus.vpnAdapter.adapterName, 1);
                 }
                 boundRoute_.create(connectStatus.defaultAdapter.gatewayIp, connectStatus.defaultAdapter.adapterName);
             }

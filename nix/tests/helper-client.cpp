@@ -17,11 +17,14 @@ int main(int argc, char **argv)
         if (action == "up" || action == "down") {
             operation = HelperCommand::setGaiIpv4PriorityEnabled;
             payload = serializeResult(action == "up");
-        } else if (action == "split-on" || action == "split-off") {
+        } else if (action == "split-on" || action == "split-off" || action == "split-defaults") {
             operation = HelperCommand::setSplitTunnelingSettings;
-            payload = serializeResult(action == "split-on", true, true,
+            const bool defaults = action == "split-defaults";
+            payload = serializeResult(action != "split-off", true, true,
                 std::vector<std::string>(),
-                std::vector<std::string>{"100.72.0.0/16", "100.100.100.100"},
+                defaults
+                    ? std::vector<std::string>{"0.0.0.0/0", "100.72.0.0/16", "::/0", "fd7a:115c:a1e0::/64"}
+                    : std::vector<std::string>{"100.72.0.0/16", "100.100.100.100", "fd7a:115c:a1e0::/64"},
                 std::vector<std::string>());
         } else if (action == "connected" || action == "disconnected") {
             operation = HelperCommand::sendConnectStatus;
@@ -31,7 +34,9 @@ int main(int argc, char **argv)
             physical.gatewayIp = types::IpAddress("192.0.2.2");
             vpn.adapterName = "utun420";
             vpn.adapterIp = types::IpAddress("10.77.0.2");
+            vpn.adapterIpV6 = types::IpAddress("fd77::2");
             vpn.gatewayIp = vpn.adapterIp;
+            vpn.gatewayIpV6 = vpn.adapterIpV6;
             vpn.dnsServers = {types::IpAddress("10.255.255.1")};
             payload = serializeResult(action == "connected", kCmdProtocolWireGuard, physical, vpn,
                 types::IpAddress("198.18.0.2"), types::IpAddress("198.18.0.2"), std::vector<std::string>());
@@ -91,7 +96,8 @@ int main(int argc, char **argv)
 
         int responseLength;
         boost::asio::read(socket, boost::asio::buffer(&responseLength, sizeof(responseLength)));
-        if (action == "up" || action == "down" || action == "split-on" || action == "split-off")
+        if (action == "up" || action == "down" || action == "split-on" || action == "split-off"
+            || action == "split-defaults")
             return responseLength == 0 ? 0 : 1;
         if (responseLength <= 0 || responseLength > 4096)
             return 1;

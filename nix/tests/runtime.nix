@@ -274,12 +274,11 @@ in
               tail = "ip netns exec tail-peer"
               machine.succeed("ip netns add tail-peer; ip link add tailscale0 type veth peer name eth0 netns tail-peer")
               machine.succeed("ip addr add 100.72.0.1/32 dev tailscale0; ip link set tailscale0 up")
+              machine.succeed("ip -6 addr add fd7a:115c:a1e0::1/128 dev tailscale0 nodad")
               machine.succeed(f"{tail} ip link set lo up; {tail} ip link set eth0 up; {tail} ip addr add 100.72.0.2/32 dev eth0; {tail} ip route add 100.72.0.1/32 dev eth0")
+              machine.succeed(f"{tail} ip -6 addr add fd7a:115c:a1e0::2/128 dev eth0 nodad; {tail} ip -6 route add fd7a:115c:a1e0::1/128 dev eth0")
               machine.succeed(f"{tail} ip addr add 100.100.100.100/32 dev lo; {tail} ip addr add 100.72.0.53/32 dev lo")
-              machine.succeed("ip route add 100.72.0.0/16 dev tailscale0 table 52; ip route add 100.100.100.100/32 dev tailscale0 table 52")
-              def scoped_rules(op):
-                  machine.succeed(f"ip rule {op} pref 5100 to 100.72.0.0/16 lookup 52; ip rule {op} pref 5101 to 100.100.100.100/32 lookup 52")
-              scoped_rules("add")
+              machine.succeed("ip route add 100.72.0.0/16 dev tailscale0 table 52; ip route add 100.100.100.100/32 dev tailscale0 table 52; ip -6 route add fd7a:115c:a1e0::/64 dev tailscale0 table 52")
               machine.succeed("resolvectl dns tailscale0 100.100.100.100 100.72.0.53; resolvectl domain tailscale0 '~tail.test'")
               machine.succeed(f"systemd-run --unit=tail-test-dns {tail} ${pkgs.dnsmasq}/bin/dnsmasq --keep-in-foreground --conf-file=/dev/null --no-resolv --no-hosts --bind-interfaces --listen-address=100.100.100.100,100.72.0.53 --address=/tail.test/100.72.0.2")
               machine.wait_for_unit("tail-test-dns.service")
@@ -294,6 +293,26 @@ in
           dns_before = {name: resolved_property(manager, "Manager", name) for name in baseline}
           try:
               action = "awg" if mode == "amnezia" else "wg"
+              # Convert the generated base64 keys to the engine's hex IPC format without printing them.
+              encode = "import base64; from pathlib import Path; print(' '.join(base64.b64decode(Path('/run/wg-keys/' + n).read_text()).hex() for n in ['client', 'peer.pub', 'psk']))"
+              if mode == "fallback":
+                  # Foreign rules with extra selectors are rejected and survive failed
+                  # setup/teardown; failed acquisition must not grant cleanup ownership.
+                  machine.succeed("ip rule add pref 4204 to 192.0.2.0/24 nop")
+                  machine.succeed(f"{client} {action}-start")
+                  machine.fail(f"python3 -c {shlex.quote(encode)} | {client} {action}-configure")
+                  machine.succeed(f"{client} wg-stop")
+                  occupied = machine.succeed("ip rule show priority 4204")
+                  assert occupied == "4204:\tfrom all to 192.0.2.0/24 nop\n", occupied
+                  machine.succeed("ip rule del pref 4204 to 192.0.2.0/24 nop")
+                  machine.succeed("ip rule add pref 4202 to 192.0.2.0/24 lookup main suppress_prefixlength 0")
+                  machine.succeed(f"{client} {action}-start")
+                  machine.fail(f"python3 -c {shlex.quote(encode)} | {client} {action}-configure")
+                  machine.succeed(f"{client} wg-stop")
+                  occupied = machine.succeed("ip rule show priority 4202")
+                  assert occupied == "4202:\tfrom all to 192.0.2.0/24 lookup main suppress_prefixlength 0\n", occupied
+                  assert machine.succeed("ip rule show priority 4204").strip() == ""
+                  machine.succeed("ip rule del pref 4202 to 192.0.2.0/24 lookup main suppress_prefixlength 0")
               machine.succeed(f"{client} {action}-start")
               if mode == "kernel":
                   machine.succeed("grep -q 'Using wireguard kernel module' /var/log/windscribe/helper.log")
@@ -304,8 +323,6 @@ in
                   machine.succeed(f"pgrep -f '^{amneziawg} -f utun420$'")
                   if mode == "fallback":
                       machine.succeed("test -e /run/wg-fallback-observed")
-              # Convert the generated base64 keys to the engine's hex IPC format without printing them.
-              encode = "import base64; from pathlib import Path; print(' '.join(base64.b64decode(Path('/run/wg-keys/' + n).read_text()).hex() for n in ['client', 'peer.pub', 'psk']))"
               machine.succeed(f"python3 -c {shlex.quote(encode)} | {client} {action}-configure")
               kind = json.loads(machine.succeed("ip -d -j link show utun420"))[0]["linkinfo"]["info_kind"]
               assert kind == ("wireguard" if mode == "kernel" else "tun"), kind
@@ -318,8 +335,9 @@ in
               machine.succeed(f"ip -4 route show table {routing_table} | grep -q 'default dev utun420'")
               for family in (["-4"] if mode == "amnezia" else ["-4", "-6"]):
                   installed = machine.succeed(f"ip {family} rule show")
-                  assert "5208:\tfrom all lookup main suppress_prefixlength 0" in installed, installed
-                  assert f"5209:\tnot from all fwmark 0xca6c lookup {routing_table}" in installed, installed
+                  assert "4202:\tfrom all lookup main suppress_prefixlength 0" in installed, installed
+                  assert f"4203:\tnot from all fwmark 0xca6c lookup {routing_table}" in installed, installed
+                  assert "4204:\tfrom all nop" in installed, installed
               machine.succeed("ip -4 route get 198.18.0.2 | grep -q 'via 192.0.2.2 dev wg-underlay'")
               machine.succeed(f"ip -4 route get 203.0.113.99 | grep -q 'dev utun420 table {routing_table}'")
               machine.succeed("nft list ruleset | grep -q 'chain wg_mangle_pre'")
@@ -351,25 +369,59 @@ in
               assert "203.0.113.99" in answer and "utun420" in answer, answer
               if mode == "kernel":
                   # Exercise the packaged cgroup script without moving any processes.
-                  # It must not duplicate WG's priority-5208 rule in either family.
+                  # Its app-policy priorities remain independent of WG's 420x block.
                   machine.succeed(shlex.join([f"{scripts}/cgroups-up", "0xdecafbad", "192.0.2.2", "wg-underlay", "10.77.0.1", "utun420", "198.18.0.2", "0xcafecafe", "allow", "exclusive", "", "fd77::1", "wg-underlay", "", "0xca6c"]))
                   for family in ["-4", "-6"]:
-                      assert machine.succeed(f"ip {family} rule show").count("5208:") == 1
+                      installed = machine.succeed(f"ip {family} rule show")
+                      assert installed.count("4202:") == 1
+                      assert "16383:" in installed and "16384:" in installed
+                      assert "16385:" not in installed
                   machine.succeed(f"{scripts}/cgroups-down")
+                  machine.succeed("ip rule add pref 4201 to 192.0.2.0/24 lookup main")
+                  machine.succeed(f"{client} split-on && {client} connected")
+                  occupied = machine.succeed("ip rule show priority 4201")
+                  assert occupied == "4201:\tfrom all to 192.0.2.0/24 lookup main\n", occupied
+                  machine.succeed(f"{client} split-off")
+                  machine.succeed("ip rule del pref 4201 to 192.0.2.0/24 lookup main")
+                  # iproute2 omits `to 0.0.0.0/0` and `to ::/0` when displaying
+                  # default-destination rules. They must coexist with specific exclusions.
+                  machine.succeed(f"{client} split-defaults && {client} connected")
+                  installed = machine.succeed("ip -4 rule show")
+                  assert "4201:\tfrom all goto 4204" in installed, installed
+                  assert "4201:\tfrom all to 100.72.0.0/16 goto 4204" in installed, installed
+                  installed6 = machine.succeed("ip -6 rule show")
+                  assert "4201:\tfrom all goto 4204" in installed6, installed6
+                  assert "4201:\tfrom all to fd7a:115c:a1e0::/64 goto 4204" in installed6, installed6
+                  machine.succeed(f"{client} split-off")
                   machine.succeed(f"{client} split-on && {client} connected && {client} firewall-on")
-                  # The real exclusion path still pins physical routes. Scoped rules
-                  # must win regardless of whether they were added before or after WG.
-                  machine.succeed("ip route show 100.72.0.0/16 | grep -q 'via 192.0.2.2 dev wg-underlay'")
-                  for readd in [False, True]:
-                      if readd:
-                          scoped_rules("del")
-                          scoped_rules("add")
-                      machine.succeed("ip route get 100.72.0.2 | grep -q 'dev tailscale0 table 52'")
-                      machine.succeed("ip route get 100.100.100.100 | grep -q 'dev tailscale0 table 52'")
-                      machine.succeed("ip route get 10.20.30.2 mark 0x80000 | grep -q 'dev wg-underlay'")
-                      machine.succeed("ip route get 203.0.113.99 | grep -q 'dev utun420 table 51820'")
-                      for destination in ["100.72.0.2", "10.20.30.2", "203.0.113.99"]:
-                          machine.succeed(f"ping -c 2 -W 2 {destination}")
+                  # Exclusions jump over only the early WG capture and resume the host's
+                  # table-52 policy. No physical-gateway destination pins are installed.
+                  assert machine.succeed("ip route show 100.72.0.0/16").strip() == ""
+                  assert machine.succeed("ip route show 100.100.100.100/32").strip() == ""
+                  installed = machine.succeed("ip -4 rule show")
+                  assert "4201:\tfrom all to 100.72.0.0/16 goto 4204" in installed, installed
+                  assert "4201:\tfrom all to 100.100.100.100 goto 4204" in installed, installed
+                  installed6 = machine.succeed("ip -6 rule show")
+                  assert "4201:\tfrom all to fd7a:115c:a1e0::/64 goto 4204" in installed6, installed6
+                  machine.succeed("ip route get 100.72.0.2 | grep -Eq 'dev tailscale0 table 52 src 100.72.0.1'")
+                  machine.succeed("ip route get 100.100.100.100 | grep -Eq 'dev tailscale0 table 52 src 100.72.0.1'")
+                  machine.succeed("ip -6 route get fd7a:115c:a1e0::2 | grep -Eq 'dev tailscale0 table 52 src fd7a:115c:a1e0::1'")
+                  machine.succeed("ip route get 10.20.30.2 mark 0x80000 | grep -Eq 'dev wg-underlay src 10.20.30.1'")
+                  machine.succeed("ip route get 203.0.113.99 | grep -Eq 'dev utun420 table 51820 src 10.77.0.2'")
+                  machine.succeed("ip -6 route get 2001:db8::99 | grep -Eq 'dev utun420 table 51820 src fd77::2'")
+                  for command in ["ping -c 2 -W 2 100.72.0.2", "ping -6 -c 2 -W 2 fd7a:115c:a1e0::2", "ping -c 2 -W 2 10.20.30.2", "ping -c 2 -W 2 203.0.113.99"]:
+                      machine.succeed(command)
+
+                  # Settings toggles and reconnects reconcile, rather than duplicate,
+                  # destination jumps. Disabling split mode adds no WG /1 main routes.
+                  machine.succeed(f"{client} split-off")
+                  for family in ["-4", "-6"]:
+                      assert "4201:" not in machine.succeed(f"ip {family} rule show")
+                  assert machine.succeed("ip route show 0.0.0.0/1").strip() == ""
+                  assert machine.succeed("ip route show 128.0.0.0/1").strip() == ""
+                  machine.succeed(f"{client} split-on && {client} connected")
+                  assert machine.succeed("ip -4 rule show").count("4201:") == 2
+                  assert machine.succeed("ip -6 rule show").count("4201:") == 1
                   def query(server, tcp=False):
                       transport = "+tcp" if tcp else "+notcp"
                       return f"dig +time=1 +tries=1 +short {transport} @{server} peer.tail.test A"
@@ -400,7 +452,7 @@ in
                       assert machine.succeed(query("100.100.100.100", tcp)).strip() == "100.72.0.2"
                       assert machine.succeed(query("100.72.0.53", tcp)).strip() == "100.72.0.2"
                   machine.succeed("systemctl stop wg-magic-dns.service")
-                  machine.succeed("ip route replace 100.100.100.100/32 via 192.0.2.2 dev wg-underlay; ip route add 100.100.100.100/32 dev tailscale0 table 52")
+                  machine.succeed("ip route del 100.100.100.100/32; ip route add 100.100.100.100/32 dev tailscale0 table 52")
                   machine.succeed("nft 'add rule inet tailnet_guard output ip daddr { 100.72.0.0/16, 100.100.100.100 } oifname != { \"tailscale0\", \"lo\" } counter drop'")
                   # Reapply via the production connect lifecycle, not handcrafted DNS rules.
                   machine.succeed(f"{client} connected && {client} firewall-on")
@@ -411,7 +463,19 @@ in
                   machine.fail("ping -c 1 -W 1 198.18.0.3")
                   machine.succeed(f"{client} firewall-off")
                   machine.succeed("ping -c 1 -W 1 198.18.0.3 && ip route del 198.18.0.3/32")
+                  # Model a spontaneous tunnel failure: WG teardown happens before
+                  # the engine's disconnected notification. The landing rule stays
+                  # until HostnamesManager removes the final jump, then disappears.
+                  machine.succeed(f"{client} wg-stop")
+                  for family in ["-4", "-6"]:
+                      stopped_rules = machine.succeed(f"ip {family} rule show")
+                      assert "4201:" in stopped_rules and "4204:" in stopped_rules
+                      assert "4202:" not in stopped_rules and "4203:" not in stopped_rules
                   machine.succeed(f"{client} disconnected && {client} split-off && {client} firewall-off")
+                  for family in ["-4", "-6"]:
+                      disconnected_rules = machine.succeed(f"ip {family} rule show")
+                      assert "4201:" not in disconnected_rules
+                      assert "4204:" not in disconnected_rules
                   # The legacy bound-route teardown removes the existing default too.
                   machine.succeed("ip route replace default via 192.0.2.2 dev wg-underlay")
           finally:
@@ -439,7 +503,6 @@ in
           if mode == "fallback":
               machine.succeed("ip route del unreachable 203.0.113.7/32 table 51820")
           if mode == "kernel":
-              scoped_rules("del")
               machine.succeed("systemctl stop tail-test-dns.service; nft delete table inet tailnet_guard; ip link del tailscale0; ip netns del tail-peer")
           if mode == "amnezia":
               machine.succeed("systemctl is-active awg-test-peer.service")

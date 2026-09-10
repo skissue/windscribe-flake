@@ -37,7 +37,8 @@ public:
                 const types::IpAddress &adapterIpV6,
                 const std::string &adapterName,
                 const std::string &adapterNameV6,
-                const std::vector<types::IpAddressRange> &ips);
+                const std::vector<types::IpAddressRange> &ips,
+                bool useWireGuardPolicyRules = false);
     void clear();
 
 private:
@@ -59,6 +60,10 @@ private:
         // WireGuard point-to-point case). In that mode we drop `via` and emit
         // `dev <iface>` only; otherwise we emit `via <gw> dev <iface>`.
         bool gatewayIsLocal = false;
+
+        // WG-exclusive destinations use a policy jump instead of a main-table route,
+        // allowing later host policy (for example Tailscale table 52) to decide them.
+        bool wireGuardPolicyRule = false;
     };
 
     // Keyed by destination range so v4/v6 entries don't collide on string equality
@@ -85,4 +90,7 @@ private:
     // retries it instead of orphaning a live route.
     bool addRoute(const RouteDescr &rd);
     bool deleteRoute(const RouteDescr &rd);
+    bool addPolicyRule(const RouteDescr &rd);
+    bool deletePolicyRule(const RouteDescr &rd);
+    void deleteUnusedPolicyLandingRule(bool isV6);
 };
