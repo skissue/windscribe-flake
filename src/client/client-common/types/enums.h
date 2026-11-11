@@ -63,7 +63,7 @@ enum class ConnectError {
     kTransientTunnelFailure = 8,        // network-level failure; retrying the attempt makes sense
     kTunnelEstablishmentFailure = 9,    // tunnel never established; the dialed config is suspect
     kVpnServiceSetupFailure = 10,       // OS VPN service/extension plumbing failed
-    kHostsFileNotWritable = 11,         // hosts file locked; user remediation offered
+    kHostsFileNotWritable = 11,         // hosts file could not be updated (IKEv2 on Windows)
     kCustomConfigInvalid = 12,          // custom config unusable
     kConfigFetchFailure = 13,           // server config unavailable from the API
     kLocalConfigGenerationFailure = 14, // config could not be produced locally (e.g. keygen)
@@ -159,7 +159,8 @@ enum SPLIT_TUNNEL_START_FAIL_REASON {
     // macOS only: the system extension is not enabled in System Settings, so the user is guided to
     // enable it.  Used only for the genuine not-enabled case -- not for a session that failed while the
     // extension was enabled, where that guidance would be wrong.
-    SPLIT_TUNNEL_START_FAIL_REASON_MAC_EXTENSION_NOT_ENABLED = 1
+    SPLIT_TUNNEL_START_FAIL_REASON_MAC_EXTENSION_NOT_ENABLED = 1,
+    SPLIT_TUNNEL_START_FAIL_REASON_MAC_SESSION_ENDED = 2
 };
 
 enum INIT_STATE {
@@ -244,7 +245,9 @@ enum UPDATE_VERSION_ERROR
     UPDATE_VERSION_ERROR_DL_FAIL = 1,
     UPDATE_VERSION_ERROR_SIGN_FAIL = 2,
     UPDATE_VERSION_ERROR_OTHER_FAIL = 3,
-    UPDATE_VERSION_ERROR_START_INSTALLER_FAIL = 8
+    UPDATE_VERSION_ERROR_START_INSTALLER_FAIL = 8,
+    UPDATE_VERSION_ERROR_CANCELLED = 9,
+    UPDATE_VERSION_ERROR_ELEVATION_DECLINED = 10
 };
 
 enum APP_SKIN

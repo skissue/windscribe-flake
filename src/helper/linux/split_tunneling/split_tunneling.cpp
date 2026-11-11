@@ -74,14 +74,22 @@ bool SplitTunneling::updateState()
         }
 
         if (isExclude_) {
-            // Exclude mode: non-WG destinations are pinned to the default adapter;
-            // WG destinations use policy jumps so later host policy can route them.
+            // WG exclusions jump past our policy block so host policy can route them. For other
+            // protocols, leave specific non-VPN main-table routes alone and pin the rest via
+            // the default adapter.
+            std::vector<std::string> tunnelDevs;
+            for (const auto &dev : {connectStatus_.vpnAdapter.adapterName, connectStatus_.vpnAdapter.adapterNameV6}) {
+                if (!dev.empty()) {
+                    tunnelDevs.push_back(dev);
+                }
+            }
             hostnamesManager_.enable(connectStatus_.defaultAdapter.gatewayIp,
                                      connectStatus_.defaultAdapter.gatewayIpV6,
                                      connectStatus_.defaultAdapter.adapterIp,
                                      connectStatus_.defaultAdapter.adapterIpV6,
                                      connectStatus_.defaultAdapter.adapterName,
                                      connectStatus_.defaultAdapter.adapterNameV6,
+                                     tunnelDevs,
                                      connectStatus_.protocol == kCmdProtocolWireGuard);
         } else {
             // Inclusive mode: host pins for included apps route via the VPN adapter.
@@ -94,7 +102,8 @@ bool SplitTunneling::updateState()
                                      connectStatus_.vpnAdapter.adapterIp,
                                      connectStatus_.vpnAdapter.adapterIpV6,
                                      connectStatus_.vpnAdapter.adapterName,
-                                     connectStatus_.vpnAdapter.adapterNameV6);
+                                     connectStatus_.vpnAdapter.adapterNameV6,
+                                     {});
         }
     } else {
         CGroups::instance().disable();

@@ -586,6 +586,18 @@ If you lose your account hash, it&apos;s gone forever and support cannot help yo
 <context>
     <name>MainWindow</name>
     <message>
+        <source>Windscribe could not update your hosts file, which IKEv2 requires. Another program, such as antivirus or endpoint security software, may be blocking changes to it. Please try again, or use a different connection mode.</source>
+        <translation>Windscribe نتوانست فایل hosts شما را که برای IKEv2 لازم است به‌روزرسانی کند. ممکن است برنامه دیگری، مانند نرم‌افزار ضدویروس یا نرم‌افزار امنیتی نقاط پایانی، از تغییر آن جلوگیری کند. لطفاً دوباره تلاش کنید یا از حالت اتصال دیگری استفاده کنید.</translation>
+    </message>
+    <message>
+        <source>Split Tunneling Stopped</source>
+        <translation>Split Tunneling متوقف شد</translation>
+    </message>
+    <message>
+        <source>The split tunneling session ended unexpectedly. Please reconnect to retry. If this persists, please contact support.</source>
+        <translation>نشست Split Tunneling به‌طور غیرمنتظره پایان یافت. لطفاً برای تلاش دوباره، مجدداً متصل شوید. اگر مشکل ادامه داشت، لطفاً با پشتیبانی تماس بگیرید.</translation>
+    </message>
+    <message>
         <source>Logging you in...</source>
         <translation>وارد کردن شما به...</translation>
     </message>
@@ -800,14 +812,6 @@ Recovering...</source>
     <message>
         <source>Select an application</source>
         <translation>یک برنامه را انتخاب کنید</translation>
-    </message>
-    <message>
-        <source>Read-Only File</source>
-        <translation>پرونده فقط خواندنی</translation>
-    </message>
-    <message>
-        <source>Your hosts file is read-only. IKEv2 connectivity requires for it to be writable. Fix the issue automatically?</source>
-        <translation>فایل میزبان شما فقط خواندنی است. اتصال IKEv2 مستلزم ان است که قابل نوشتن باشد. مشکل را به طور خودکار حل کنید؟</translation>
     </message>
     <message>
         <source>The custom configuration could not be loaded.  Please check that it’s correct or contact support.</source>
@@ -1507,10 +1511,6 @@ If the problem persists after a restart, please send a debug log and open a supp
         <translation>غیرفعال کردن Allow LAN Traffic باعث می شود که کانون امن شما کار خود را متوقف کند.  ایا می خواهید کانون را غیرفعال کنید؟</translation>
     </message>
     <message>
-        <source>MAC spoofing is not supported on your version of MacOS.</source>
-        <translation>MAC spoofing در نسخه MacOS شما پشتیبانی نمی شود.</translation>
-    </message>
-    <message>
         <source>Automatically determine the MTU for your connection, or manually override.  This has no effect on TCP-based protocols.</source>
         <translation>MTU را به طور خودکار برای اتصال خود تعیین کنید یا به صورت دستی لغو کنید.  این هیچ تاثیری بر پروتکل های مبتنی بر TCP ندارد.</translation>
     </message>
@@ -1565,7 +1565,7 @@ If the problem persists after a restart, please send a debug log and open a supp
         <translation>فریب ترافیک</translation>
     </message>
     <message>
-        <source>This is an experimental feature that attempts to combat traffic correlation attacks on adversarial networks.When enabled, the app will generate random activity over the tunnel, and upload and download random data at chosen intervals.</source>
+        <source>This is an experimental feature that attempts to combat traffic correlation attacks on adversarial networks. When enabled, the app will generate random activity over the tunnel, and upload and download random data at chosen intervals.</source>
         <translation>این یک ویژگی تجربی است که تلاش می کند با حملات همبستگی ترافیکی به شبکه های متخاصم مبارزه کند. در صورت فعال بودن، برنامه فعالیت تصادفی را روی تونل ایجاد می کند و داده های تصادفی را در فواصل زمانی انتخاب شده آپلود و دانلود می کند.</translation>
     </message>
     <message>
@@ -2378,6 +2378,10 @@ Connect to a network first</source>
 <context>
     <name>PreferencesWindow::SplitTunnelingAppsGroup</name>
     <message>
+        <source>This app is already in the list.</source>
+        <translation>این برنامه از قبل در لیست وجود دارد.</translation>
+    </message>
+    <message>
         <source>There are too many apps in the list. Please remove some before adding more.</source>
         <translation>برنامه های زیادی در لیست وجود دارد. لطفا قبل از اضافه کردن بیشتر، برخی از انها را حذف کنید.</translation>
     </message>
@@ -2707,6 +2711,14 @@ If the reinstall does not help, please contact Windscribe support for assistance
         <translation>پارامتر init AmneziaWG شامل کاراکترهای نامعتبر است</translation>
     </message>
     <message>
+        <source>Invalid AmneziaWG parameter: %1</source>
+        <translation>پارامتر AmneziaWG نامعتبر: ٪1</translation>
+    </message>
+    <message>
+        <source>Invalid &quot;PersistentKeepalive&quot; value</source>
+        <translation>مقدار «PersistentKeepalive» نامعتبر</translation>
+    </message>
+    <message>
         <source>Static IPs</source>
         <translation>IP های استاتیک</translation>
     </message>
@@ -2805,6 +2817,10 @@ If the reinstall does not help, please contact Windscribe support for assistance
     <message>
         <source>Alternate</source>
         <translation>جایگزین</translation>
+    </message>
+    <message>
+        <source>Windscribe is already running in another user session on this computer. Quit Windscribe in that session, then try again.</source>
+        <translation>Windscribe در حال حاضر در جلسه کاربر دیگری روی این رایانه در حال اجرا است. لطفاً در آن جلسه از Windscribe خارج شوید و سپس دوباره تلاش کنید.</translation>
     </message>
 </context>
 <context>

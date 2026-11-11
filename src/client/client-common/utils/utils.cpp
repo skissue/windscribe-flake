@@ -101,6 +101,14 @@ QString Utils::generateSecureCredential(int length)
     return out;
 }
 
+QString Utils::redactCredential(const QString &value)
+{
+    if (value.isEmpty()) {
+        return value;
+    }
+    return (value.size() <= 2 ? QString() : value.left(2)) + "***";
+}
+
 bool Utils::isSubdomainsEqual(const QString &hostname1, const QString &hostname2)
 {
     // Compare only the subdomain portion so pinned IP matching still works when the server TLD changes.
@@ -259,9 +267,17 @@ QString Utils::getPlatformNameSafe()
 #if defined(Q_OS_MACOS) || defined(Q_OS_LINUX)
 QString Utils::execCmd(const QString &cmd)
 {
+#ifdef Q_OS_LINUX
+    // Utilities such as nmcli and ping translate their output under a non-English locale, which breaks
+    // the callers that parse it. C.UTF-8 rather than C so non-ASCII connection names survive nmcli's
+    // charset conversion; LANGUAGE is unset because older glibc lets it override LC_ALL for messages.
+    const std::string shellCmd = "export LC_ALL=C.UTF-8; unset LANGUAGE; " + cmd.toStdString();
+#else
+    const std::string shellCmd = cmd.toStdString();
+#endif
     char buffer[1024];
     QString result = "";
-    FILE* pipe = popen(cmd.toStdString().c_str(), "r");
+    FILE* pipe = popen(shellCmd.c_str(), "r");
     if (!pipe) return "";
     while (!feof(pipe))
     {

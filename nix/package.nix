@@ -22,6 +22,7 @@
   spdlog,
   miniaudio,
   nftables,
+  rapidjson,
   src,
   wsnet,
   wsOpenSSL,
@@ -31,7 +32,7 @@
 }:
 stdenv.mkDerivation {
   pname = "windscribe-desktop";
-  version = "2.24.12";
+  version = "2.25.8";
   inherit src;
   nativeBuildInputs = [cmake ninja pkg-config makeWrapper qt6.wrapQtAppsHook];
   buildInputs = [
@@ -48,8 +49,16 @@ stdenv.mkDerivation {
     spdlog
     miniaudio
     nftables
+    rapidjson
     skyr
   ];
+  # systemd's user manager cannot inherit the CLI's helper group. Launch the
+  # module's setgid GUI wrapper, not the unprivileged binary beside the CLI.
+  postPatch = ''
+    substituteInPlace src/windscribe-cli/main.cpp \
+      --replace-fail 'QString appPath = workingDir + "/Windscribe";' \
+      'QString appPath = "/run/wrappers/bin/Windscribe";'
+  '';
   # WSTunnel and Control-D executables are not packaged yet.
   preConfigure = ''
     cmakeFlagsArray+=("-DCMAKE_INSTALL_RPATH=$out/lib" "-DWS_LINUX_INSTALL_DIR=$out/libexec/windscribe")
@@ -82,6 +91,12 @@ stdenv.mkDerivation {
     cp -r ../src/installer/gui/linux/overlay/usr/share/icons/hicolor $out/share/icons/
     install -Dm755 -t $out/libexec/windscribe/scripts \
       ../src/installer/windscribe/linux/opt/windscribe/scripts/*
+    # Keep upstream's root-hook PATH hardening, using immutable Nix tools.
+    for script in update-network-manager update-resolv-conf update-systemd-resolved; do
+      substituteInPlace "$out/libexec/windscribe/scripts/$script" \
+        --replace-fail 'PATH=/usr/sbin:/usr/bin:/sbin:/bin' \
+        'PATH=${lib.makeBinPath [coreutils gnugrep gnused iproute2 kmod procps systemd util-linux e2fsprogs openresolv]}'
+    done
     patchShebangs $out/libexec/windscribe/scripts
     # OpenVPN does not pass the helper's environment to its hooks.
     # Use shell wrappers so the Qt hook does not wrap these again as ELF executables.

@@ -11,15 +11,22 @@ set(SOURCES
     ../../client/client-common/utils/executable_signature/executable_signature.h
     ../common/io_posix.cpp
     ../common/io_posix.h
+    ../common/ovpn_early_exit_log.cpp
     ../common/ovpn_mgmt_posix.cpp
     ../common/ovpn_mgmt_posix.h
+    ../common/process_kill_posix.cpp
+    ../common/process_kill_posix.h
     ../common/spawn_posix.cpp
     ../common/spawn_posix.h
     ../common/validation_posix.cpp
     ../common/validation_posix.h
     ../common/wg_handshake_tracker.h
     3rdparty/pstream.h
+    appuser.cpp
+    appuser.h
     clear_wifi_history/clear_wifi_history.mm
+    directory_mac.h
+    directory_mac.mm
     files_manager.cpp
     files_manager.h
     firewallcontroller.cpp
@@ -88,6 +95,7 @@ target_link_libraries(${WS_MAC_HELPER_BUNDLE_ID}
                       skyr::skyr-url
                       spdlog::spdlog
                       "-framework Foundation"
+                      "-framework OpenDirectory"
                       "-framework Security"
                       "-framework SystemConfiguration"
                       "-sectcreate __TEXT __info_plist ${CMAKE_CURRENT_BINARY_DIR}/helper-info.plist.configured"

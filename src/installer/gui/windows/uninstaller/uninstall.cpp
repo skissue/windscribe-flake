@@ -112,6 +112,17 @@ bool Uninstaller::PerformUninstall(const P_DeleteUninstallDataFilesProc DeleteUn
         isClean = false;
     }
 
+    // applicationPath lives here and is readable by a later elevated install.  Leaving it after
+    // uninstall lets that install rediscover a folder the user can recreate.  Deleting the key is
+    // cleanup; the installer still refuses to run a discovered uninstaller unless it is in the
+    // default Program Files location and Windscribe-signed.
+    const wstring installerKeyName = ApplicationInfo::installerRegistryKey(false);
+    ret = Registry::RegDeleteKeyIncludingSubkeys1(HKEY_CURRENT_USER, installerKeyName.c_str());
+    if (ret != ERROR_SUCCESS && ret != ERROR_FILE_NOT_FOUND) {
+        spdlog::error(L"Uninstaller::PerformUninstall - failed to delete registry entry {} ({})", installerKeyName, ret);
+        isClean = false;
+    }
+
     // Only a folder that is genuinely absent counts as already clean.  A failed stat for any
     // other reason (e.g. ACCESS_DENIED from AV or a lingering handle) must not imply success:
     // the folder is still there, so attempt the removal and reflect its outcome in isClean.
@@ -308,9 +319,26 @@ void Uninstaller::UninstallHelper()
         wsl::ServiceControlManager svcCtrl;
         svcCtrl.openSCM(SC_MANAGER_ALL_ACCESS);
 
-        if (svcCtrl.isServiceInstalled(serviceName.c_str())) {
-            svcCtrl.deleteService(serviceName.c_str());
+        if (!svcCtrl.isServiceInstalled(serviceName.c_str())) {
+            spdlog::info("The Windscribe service is not installed; nothing to remove.");
+            return;
         }
+
+        // The error_code overload marks the service for deletion even when it cannot be stopped
+        // first, then waits for the SCM to drop it.  A helper that is wedged in its shutdown must
+        // not cost us the deletion: leaving the service registered is what makes the next install
+        // fail with ERROR_SERVICE_MARKED_FOR_DELETE or ERROR_SERVICE_EXISTS.
+        error_code ec;
+        if (!svcCtrl.deleteService(serviceName.c_str(), ec)) {
+            spdlog::warn("WARNING: failed to delete the Windscribe service - {} ({})", ec.message(), ec.value());
+            wsl::ServiceControlManager::logServiceStatusAndConfig(serviceName.c_str(), false,
+                                                                  [](const std::string &message) {
+                spdlog::warn("UninstallHelper: {}", message);
+            });
+            return;
+        }
+
+        spdlog::info("The Windscribe service was removed.");
     }
     catch (system_error& ex) {
         spdlog::warn("WARNING: failed to delete the Windscribe service - {}", ex.what());

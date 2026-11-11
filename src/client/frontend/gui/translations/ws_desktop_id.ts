@@ -586,6 +586,18 @@ Jika Anda kehilangan hash akun, itu akan hilang selamanya dan dukungan tidak dap
 <context>
     <name>MainWindow</name>
     <message>
+        <source>Windscribe could not update your hosts file, which IKEv2 requires. Another program, such as antivirus or endpoint security software, may be blocking changes to it. Please try again, or use a different connection mode.</source>
+        <translation>Windscribe tidak dapat memperbarui file hosts Anda, yang diperlukan oleh IKEv2. Program lain, seperti antivirus atau perangkat lunak keamanan titik akhir, mungkin memblokir perubahan pada file tersebut. Silakan coba lagi, atau gunakan mode koneksi yang berbeda.</translation>
+    </message>
+    <message>
+        <source>Split Tunneling Stopped</source>
+        <translation>Terowongan Terpisah Dihentikan</translation>
+    </message>
+    <message>
+        <source>The split tunneling session ended unexpectedly. Please reconnect to retry. If this persists, please contact support.</source>
+        <translation>Sesi terowongan terpisah berakhir secara tidak terduga. Silakan sambungkan kembali untuk mencoba lagi. Jika masalah berlanjut, silakan hubungi dukungan.</translation>
+    </message>
+    <message>
         <source>Logging you in...</source>
         <translation>Memasukkan Anda...</translation>
     </message>
@@ -800,14 +812,6 @@ Memulihkan...</translation>
     <message>
         <source>Select an application</source>
         <translation>Pilih aplikasi</translation>
-    </message>
-    <message>
-        <source>Read-Only File</source>
-        <translation>File baca-saja</translation>
-    </message>
-    <message>
-        <source>Your hosts file is read-only. IKEv2 connectivity requires for it to be writable. Fix the issue automatically?</source>
-        <translation>File host Anda bersifat baca-saja. Konektivitas IKEv2 mengharuskannya dapat ditulis. Memperbaiki masalah secara otomatis?</translation>
     </message>
     <message>
         <source>The custom configuration could not be loaded.  Please check that it’s correct or contact support.</source>
@@ -1507,10 +1511,6 @@ Jika masalah berlanjut setelah restart, silakan kirim log debug dan buka tiket d
         <translation>Menonaktifkan Izinkan Lalu Lintas LAN akan menyebabkan hotspot aman Anda berhenti berfungsi.  Apakah Anda ingin menonaktifkan hotspot?</translation>
     </message>
     <message>
-        <source>MAC spoofing is not supported on your version of MacOS.</source>
-        <translation>Spoofing MAC tidak didukung di versi MacOS Anda.</translation>
-    </message>
-    <message>
         <source>Automatically determine the MTU for your connection, or manually override.  This has no effect on TCP-based protocols.</source>
         <translation>Secara otomatis menentukan MTU untuk koneksi Anda, atau mengganti secara manual.  Ini tidak berpengaruh pada protokol berbasis TCP.</translation>
     </message>
@@ -1565,7 +1565,7 @@ Jika masalah berlanjut setelah restart, silakan kirim log debug dan buka tiket d
         <translation>Lalu Lintas Umpan</translation>
     </message>
     <message>
-        <source>This is an experimental feature that attempts to combat traffic correlation attacks on adversarial networks.When enabled, the app will generate random activity over the tunnel, and upload and download random data at chosen intervals.</source>
+        <source>This is an experimental feature that attempts to combat traffic correlation attacks on adversarial networks. When enabled, the app will generate random activity over the tunnel, and upload and download random data at chosen intervals.</source>
         <translation>Ini adalah fitur eksperimental yang mencoba memerangi serangan korelasi lalu lintas pada jaringan musuh. Saat diaktifkan, aplikasi akan menghasilkan aktivitas acak melalui terowongan, dan mengunggah dan mengunduh data acak pada interval yang dipilih.</translation>
     </message>
     <message>
@@ -2378,6 +2378,10 @@ Menyambungkan ke jaringan terlebih dahulu</translation>
 <context>
     <name>PreferencesWindow::SplitTunnelingAppsGroup</name>
     <message>
+        <source>This app is already in the list.</source>
+        <translation>Aplikasi ini sudah ada dalam daftar.</translation>
+    </message>
+    <message>
         <source>There are too many apps in the list. Please remove some before adding more.</source>
         <translation>Ada terlalu banyak aplikasi dalam daftar. Harap hapus beberapa sebelum menambahkan lebih banyak.</translation>
     </message>
@@ -2707,6 +2711,14 @@ Jika penginstalan ulang tidak membantu, hubungi dukungan Windscribe untuk mendap
         <translation>Parameter init AmneziaWG berisi karakter yang tidak valid</translation>
     </message>
     <message>
+        <source>Invalid AmneziaWG parameter: %1</source>
+        <translation>Parameter AmneziaWG tidak valid: %1</translation>
+    </message>
+    <message>
+        <source>Invalid &quot;PersistentKeepalive&quot; value</source>
+        <translation>Nilai &quot;PersistentKeepalive&quot; tidak valid</translation>
+    </message>
+    <message>
         <source>Static IPs</source>
         <translation>IP statis</translation>
     </message>
@@ -2805,6 +2817,10 @@ Jika penginstalan ulang tidak membantu, hubungi dukungan Windscribe untuk mendap
     <message>
         <source>Alternate</source>
         <translation>Alternatif</translation>
+    </message>
+    <message>
+        <source>Windscribe is already running in another user session on this computer. Quit Windscribe in that session, then try again.</source>
+        <translation>Windscribe sudah berjalan di sesi pengguna lain di komputer ini. Silakan berhenti dari Windscribe di sesi tersebut, lalu coba lagi.</translation>
     </message>
 </context>
 <context>

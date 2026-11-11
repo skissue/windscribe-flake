@@ -5,13 +5,13 @@
 }:
 buildGoModule rec {
   pname = "amneziawg-go";
-  version = "0.2.16";
+  version = "3.1.20260828";
 
   src = fetchFromGitHub {
     owner = "amnezia-vpn";
     repo = "amneziawg-go";
-    rev = "730d6c39d0c4e348a3d080bebe496664215e5c99";
-    hash = "sha256-JGmWMPVgereSZmdHUHC7ZqWCwUNfxfj3xBf/XDDHhpo=";
+    rev = "b5928efb6ca19f0153958460c3d141f04abc5c2e";
+    hash = "sha256-vZb72SA+6v8FXZX247K05yiVEBWpLqAAIyw6bEE4eUQ=";
   };
 
   # Upstream's Makefile generates this from `git describe`; fetchFromGitHub omits .git.
@@ -20,7 +20,7 @@ buildGoModule rec {
       --replace-fail 'const Version = "0.0.20250522"' 'const Version = "v${version}"'
   '';
 
-  vendorHash = "sha256-ZO8sLOaEY3bii9RSxzXDTCcwlsQEYmZDI+X1WPXbE9c=";
+  vendorHash = "sha256-Y2dCwlKMVLrkzDcNKyCPxFJwMbCA2mQKkakvzwbamCY=";
   subPackages = ["."];
   # Nix's vendoring exposes dependency sources to this repository-wide formatting test.
   checkFlags = ["-skip=TestFormatting"];

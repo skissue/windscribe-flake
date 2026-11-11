@@ -10,12 +10,12 @@
 }:
 stdenv.mkDerivation {
   pname = "windscribe-curl";
-  version = "8.21.0";
+  version = "8.23.0";
   src = fetchFromGitHub {
     owner = "curl";
     repo = "curl";
-    rev = "curl-8_21_0";
-    hash = "sha256-7UGy24Q0Ny+U9hWXV6BzgKc45zkvw+I24GvgyaYsy/I=";
+    rev = "curl-8_23_0";
+    hash = "sha256-jRaJNMd/q0ae2XGhuNkGWe+VxoVSi77gB4dAAkDgENQ=";
   };
   patches = [
     ../sources/registry/ports/curl/super-large-padding-extension.patch

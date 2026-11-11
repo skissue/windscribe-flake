@@ -18,12 +18,15 @@ stdenv.mkDerivation {
   src = fetchFromGitHub {
     owner = "OpenVPN";
     repo = "openvpn";
-    rev = "b25bb2a8bda814edab39b4246d4e296330a7a29e";
-    hash = "sha256-oyKidDw+3PRmHezyftfYXqe8pIwF0Bnr4ue1Alq5zKc=";
+    rev = "85f07f7b784009adf90129b3854c5b742ca3cef9";
+    hash = "sha256-yFnNtMf8uEtKYEDxIBzhmqYXX7phEM/MYwXrI3WNvP8=";
   };
-  # The registry's other patches concern CMake installation and Windows applink.
+  # The registry's other patches concern CMake installation and Windows support.
   patches = [
     ../sources/registry/ports/openvpn/anti-censorship.patch
+    ../sources/registry/ports/openvpn/0002-Anti-censorship-add-support-for-Amnezia-s-Jc-Jmin-Jm.patch
+    ../sources/registry/ports/openvpn/0003-Anti-censorship-introduce-junk-first-option-Jc-befor.patch
+    ../sources/registry/ports/openvpn/ws-directive-policy.patch
     ./openvpn-tests.patch
   ];
   postPatch = ''
@@ -35,6 +38,7 @@ stdenv.mkDerivation {
   buildInputs = [wsOpenSSL lzo lz4 libnl libcap_ng cmocka];
   configureFlags = [
     "--with-crypto-library=openssl"
+    "--disable-plugins"
     "--disable-plugin-auth-pam"
     "--disable-plugin-down-root"
   ];

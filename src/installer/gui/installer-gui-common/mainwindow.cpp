@@ -235,15 +235,17 @@ void MainWindow::onInstallerCallback()
         }
         break;
     case wsl::STATE_CANCELED:
-    case wsl::STATE_LAUNCHED:
         // Worker-thread callback: post the exit to the GUI thread; a direct cross-thread qApp->exit()
         // intermittently fails to return from exec().
-        QMetaObject::invokeMethod(qApp, &QCoreApplication::exit, Qt::QueuedConnection, 0);
+        QMetaObject::invokeMethod(qApp, &QCoreApplication::exit, Qt::QueuedConnection, wsl::ERROR_USER_CANCELED);
+        break;
+    case wsl::STATE_LAUNCHED:
+        QMetaObject::invokeMethod(qApp, &QCoreApplication::exit, Qt::QueuedConnection, wsl::ERROR_NONE);
         break;
     case wsl::STATE_FINISHED:
         installerShim_->finish();
         break;
-    case wsl::STATE_ERROR:
+    case wsl::STATE_ERROR: {
         QString errorMsg;
         wsl::INSTALLER_ERROR error = installerShim_->lastError();
         if (error == wsl::ERROR_PERMISSION) {
@@ -270,8 +272,6 @@ void MainWindow::onInstallerCallback()
             errorMsg = tr("Windscribe is unable to install its helper service. Please manually uninstall Windscribe and try again. If this issue persists, please contact our Technical Support.");
         } else if (error == wsl::ERROR_HELPER_START) {
             errorMsg = tr("Windscribe is unable to start its helper service. Third-party security/firewall software may be the cause. If this is not the case, please contact our Technical Support.");
-        } else if (error == wsl::ERROR_EXTRACT_LAUNCH) {
-            errorMsg = tr("The installer could not launch its file extraction utility. Antivirus software or Windows security features (e.g. Smart App Control) may be blocking the installation.");
         } else if (error == wsl::ERROR_EXTRACT_FAILED) {
             errorMsg = tr("The application files could not be extracted to the installation folder. A file may be locked by another program, the disk may be full, or the downloaded installer may be damaged. If this issue persists, download the installer again and retry.");
         } else {
@@ -290,12 +290,13 @@ void MainWindow::onInstallerCallback()
             // On Windows this will go to the system debugger (e.g. Debug View app).
             qDebug() << errorMsg;
             // Posted to the GUI thread: see STATE_LAUNCHED above.
-            QMetaObject::invokeMethod(qApp, &QCoreApplication::exit, Qt::QueuedConnection, 0);
+            QMetaObject::invokeMethod(qApp, &QCoreApplication::exit, Qt::QueuedConnection, wsl::ERROR_OTHER);
         }
         else {
             QMetaObject::invokeMethod(this, &MainWindow::showError, Qt::QueuedConnection, tr("Installation failed"), errorMsg, true);
         }
         break;
+    }
     }
 }
 
@@ -307,7 +308,7 @@ void MainWindow::onMinimizeClicked()
 void MainWindow::onCloseClicked()
 {
     if (exiting_) {
-        qApp->exit();
+        qApp->exit(exitCode_);
     } else {
         showExitPrompt();
     }
@@ -354,6 +355,9 @@ void MainWindow::showError(const QString &title, const QString &desc, bool fatal
     }
 
     fatalError_ = fatal;
+    if (fatal) {
+        exitCode_ = wsl::ERROR_OTHER;
+    }
 
     disconnect(alertWindow_, nullptr, nullptr, nullptr);
 
@@ -379,6 +383,7 @@ void MainWindow::showExitPrompt()
     }
 
     exiting_ = true;
+    exitCode_ = wsl::ERROR_USER_CANCELED;
 
     disconnect(alertWindow_, nullptr, nullptr, nullptr);
 
@@ -456,7 +461,7 @@ void MainWindow::onAlertWindowPrimaryButtonClicked()
 {
     showActiveWindowAfterAlert();
     if (fatalError_ || exiting_) {
-        qApp->exit();
+        qApp->exit(exitCode_);
     }
 }
 
@@ -465,7 +470,7 @@ void MainWindow::onAlertWindowEscapeClicked()
     showActiveWindowAfterAlert();
     exiting_ = false;
     if (fatalError_) {
-        qApp->exit();
+        qApp->exit(exitCode_);
     }
 }
 

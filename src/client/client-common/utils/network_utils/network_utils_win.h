@@ -4,11 +4,16 @@
 
 #include <optional>
 
+#include "types/ipaddress.h"
 #include "types/networkinterface.h"
 
 namespace NetworkUtils_win
 {
     bool isInterfaceSpoofed(int interfaceIndex);
+    // False for virtual adapters, including those accepted as the current network because they front a physical adapter.
+    bool hasPhysicalConnector(int interfaceIndex);
+    // Virtual adapters, such as the host adapter of a Hyper-V switch, are never offered for MAC spoofing.
+    QVector<types::NetworkInterface> spoofableNetworkInterfaces(const QVector<types::NetworkInterface> &networkInterfaces);
     bool pingWithMtu(const QString &url, int mtu);
     QString getLocalIP();
     QString getRoutingTable();
@@ -36,9 +41,22 @@ namespace NetworkUtils_win
     // to false if the interface has no such address or no longer exists.
     void interfaceAddressPresence(unsigned long ifIndex, bool &hasIpv4, bool &hasGlobalIpv6);
 
+    // True once `address` on the interface has finished duplicate address detection. Until then the
+    // address is Tentative and Windows refuses to send from it (WSAEHOSTUNREACH), even with routes in place.
+    // Matched by value: any other address on the adapter (APIPA, a leftover) says nothing about the tunnel's.
+    bool isIpv4AddressPreferred(unsigned long ifIndex, const types::IpAddress &address);
+    // OpenVPN and AmneziaWG (wintun) bring the tunnel up while its address is still Tentative (~3s), so
+    // their connectors hold connected() back until isIpv4AddressPreferred(), polling at this interval.
+    // Past the cap the tunnel is reported anyway, so an address that never settles cannot stall the connect.
+    constexpr int kAddressPreferredPollMs = 50;
+    constexpr int kAddressPreferredMaxWaitMs = 4000;
+
     bool isSsidAccessAvailable();
 
     QString currentNetworkInterfaceGuid();
+
+    // Returns true if the network is still in the identifying or unidentified state (NLA).
+    bool isNetworkUnidentified(const QString &adapterGUID);
 
     // OS identity of the network the given adapter is connected to. Returns nullopt when there is no
     // answer: the query failed or the adapter has no connection in the OS network list.

@@ -11,6 +11,7 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/callback_sink.h>
 
+#include "installerenums.h"
 #include "mainwindow.h"
 #include "options.h"
 #include "languagesutil.h"
@@ -27,29 +28,42 @@ namespace
 {
 int argCount = 0;
 LPWSTR *argList = nullptr;
+// Set from -silent before any UI.  Store/Intune/SCCM launches have no user to dismiss a dialog.
+bool silentInstall = false;
 
-static std::optional<bool> isElevated()
+// Returns ERROR_SUCCESS and writes *elevated, or a Win32 error if the process
+// token could not be queried.  GetLastError is captured before Win32Handle
+// runs CloseHandle, which would overwrite it.
+static DWORD checkElevation(bool *elevated)
 {
     wsl::Win32Handle token;
     BOOL result = OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, token.data());
     if (result == FALSE) {
-        spdlog::error(L"isElevated - OpenProcessToken failed: {}", GetLastError());
-        return std::nullopt;
+        const DWORD err = ::GetLastError();
+        spdlog::error(L"checkElevation - OpenProcessToken failed: {}", err);
+        return err;
     }
 
     TOKEN_ELEVATION Elevation;
     DWORD cbSize = sizeof(TOKEN_ELEVATION);
     result = GetTokenInformation(token.getHandle(), TokenElevation, &Elevation, sizeof(Elevation), &cbSize);
     if (result == FALSE) {
-        spdlog::error(L"isElevated - GetTokenInformation failed: {}", GetLastError());
-        return std::nullopt;
+        const DWORD err = ::GetLastError();
+        spdlog::error(L"checkElevation - GetTokenInformation failed: {}", err);
+        return err;
     }
 
-    return Elevation.TokenIsElevated;
+    *elevated = Elevation.TokenIsElevated != FALSE;
+    return ERROR_SUCCESS;
 }
 
 static int WSMessageBox(const QString &title, const QString &text)
 {
+    if (silentInstall) {
+        spdlog::warn(L"{}: {}", title.toStdWString(), text.toStdWString());
+        return 0;
+    }
+
     QScopedPointer<QMessageBox> box(new QMessageBox(QMessageBox::Critical, title, text));
     return box->exec();
 }
@@ -284,13 +298,15 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmd
         spdlog::set_default_logger(std::make_shared<spdlog::logger>("teardown"));
     });
 
+    silentInstall = CheckCommandLineArgument(L"-silent");
+
 #if !defined(_M_ARM64)
     if (isWindowsOnArm()) {
         WSMessageBox(QObject::tr("Windscribe Installer"),
                      QObject::tr("This version of the Windscribe app will not operate correctly on your PC."
                                  "  Please download the 'ARM64' version from the Windscribe website to ensure"
                                  " optimal compatibility and performance."));
-        return 0;
+        return ERROR_INSTALL_PLATFORM_UNSUPPORTED;
     }
 #endif
 
@@ -306,7 +322,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmd
                          .arg(QObject::tr("Overrides the default installation directory. Installation directory must be on the system drive."))
                          .arg(QObject::tr("Sets the username the application will use to automatically log in when first launched."))
                          .arg(QObject::tr("Sets the password the application will use to automatically log in when first launched.")));
-        return 0;
+        return ERROR_SUCCESS;
     }
 
     // Useful for debugging
@@ -326,7 +342,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmd
 
     if (!ops.updating)
     {
-        ops.silent = CheckCommandLineArgument(L"-silent");
+        ops.silent = silentInstall;
         if (ops.silent) {
             expectedArgumentCount += 1;
         }
@@ -345,7 +361,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmd
                 if (install_path_index >= argCount) {
                     WSMessageBox(QObject::tr("Windscribe Install Error"),
                                  QObject::tr("The -dir parameter was specified but the directory path was not."));
-                    return 0;
+                    return ERROR_BAD_ARGUMENTS;
                 }
 
                 ops.installPath = QString::fromStdWString(argList[install_path_index]);
@@ -360,7 +376,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmd
                 if (username_index >= argCount) {
                     WSMessageBox(QObject::tr("Windscribe Install Error"),
                                  QObject::tr("The -username parameter was specified but the username was not."));
-                    return 0;
+                    return ERROR_BAD_ARGUMENTS;
                 }
 
                 ops.username = QString::fromStdWString(argList[username_index]);
@@ -374,7 +390,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmd
                 if (password_index >= argCount) {
                     WSMessageBox(QObject::tr("Windscribe Install Error"),
                                  QObject::tr("The -password parameter was specified but the password was not."));
-                    return 0;
+                    return ERROR_BAD_ARGUMENTS;
                 }
 
                 ops.password = QString::fromStdWString(argList[password_index]);
@@ -388,13 +404,13 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmd
                      QString("%1\n\n%2")
                          .arg(QObject::tr("Incorrect number of arguments passed to installer."))
                          .arg(QObject::tr("Use the -help argument to see available arguments and their format.")));
-        return 0;
+        return ERROR_BAD_ARGUMENTS;
     }
 
     if (!ops.installPath.isEmpty() && !Path::isOnSystemDrive(ops.installPath.toStdWString())) {
         WSMessageBox(QObject::tr("Windscribe Install Error"),
                      QObject::tr("The specified installation path is not on the system drive.  To ensure the security of the application, and your system, it must be installed on the same drive as Windows."));
-        return 0;
+        return ERROR_INVALID_DRIVE;
     }
 
     if (!ops.username.isEmpty()) {
@@ -403,13 +419,13 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmd
                          QString("%1\n\n%2")
                              .arg(QObject::tr("A username was specified but its corresponding password was not provided."))
                              .arg(QObject::tr("Use the -help argument to see available arguments and their format.")));
-            return 0;
+            return ERROR_BAD_ARGUMENTS;
         }
 
         if (ops.username.indexOf('@') != -1) {
             WSMessageBox(QObject::tr("Windscribe Install Error"),
                          QObject::tr("Your username should not be an email address. Please try again."));
-            return 0;
+            return ERROR_BAD_USERNAME;
         }
     }
 
@@ -418,7 +434,7 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmd
                      QString("%1\n\n%2")
                          .arg(QObject::tr("A password was specified but its corresponding username was not provided."))
                          .arg(QObject::tr("Use the -help argument to see available arguments and their format.")));
-        return 0;
+        return ERROR_BAD_ARGUMENTS;
     }
 
     spdlog::info(L"Installing Windscribe version {}", ApplicationInfo::version());
@@ -426,24 +442,39 @@ int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpszCmd
     exeName = exeName.substr(exeName.find_last_of(L"/\\") + 1);
     spdlog::info(L"Command-line args: {}", sanitizedCommandLine(exeName));
 
-    auto isAdmin = isElevated();
-    if (!isAdmin.has_value()) {
+    bool isAdmin = false;
+    const DWORD elevationErr = checkElevation(&isAdmin);
+    if (elevationErr != ERROR_SUCCESS) {
         WSMessageBox(QObject::tr("Windscribe Install Error"),
                      QObject::tr("The installer was unable to determine if it is running with administrator rights.  Please report this failure to Windscribe support."));
-        return 0;
+        return elevationErr;
     }
 
-    // MainWindow does not create a UI when running in silent mode.  We'll have to use a standard messagebox
-    // for this edge case.
-    if (!isAdmin.value() && ops.silent) {
+    // MainWindow does not create a UI in silent mode, so a missing-elevation
+    // failure has to be reported and returned here.
+    if (!isAdmin && ops.silent) {
         WSMessageBox(QObject::tr("Windscribe Install Error"),
                      QObject::tr("You don't have sufficient permissions to run this application. Administrative privileges are required to install Windscribe."));
-        return 0;
+        return ERROR_ELEVATION_REQUIRED;
     }
 
-    MainWindow w(isAdmin.value(), ops);
-    w.show();
+    MainWindow w(isAdmin, ops);
+    if (ops.silent) {
+        // Keep the event loop alive for installer callbacks; no window is shown.
+        a.setQuitOnLastWindowClosed(false);
+    } else {
+        w.show();
+    }
 
     // loggingTeardownGuard unregisters the crash handlers and flushes/releases the logger.
-    return a.exec();
+    // MainWindow reports success / user-canceled / failed; map those to Win32 codes
+    // here so the bootstrap can return them without depending on installerenums.h.
+    const int code = a.exec();
+    if (code == wsl::ERROR_NONE) {
+        return ERROR_SUCCESS;
+    }
+    if (code == wsl::ERROR_USER_CANCELED) {
+        return ERROR_CANCELLED;
+    }
+    return ERROR_INSTALL_FAILURE;
 }

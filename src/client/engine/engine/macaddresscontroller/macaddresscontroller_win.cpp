@@ -6,10 +6,12 @@
 #include "utils/network_utils/network_utils.h"
 #include "utils/network_utils/network_utils_win.h"
 
-MacAddressController_win::MacAddressController_win(QObject *parent, NetworkDetectionManager_win *ndManager) : IMacAddressController(parent)
+MacAddressController_win::MacAddressController_win(QObject *parent, INetworkDetectionManager *ndManager, Helper *helper)
+  : IMacAddressController(parent)
   , networkDetectionManager_(ndManager)
+  , helper_(helper)
 {
-    connect(networkDetectionManager_, &NetworkDetectionManager_win::networkChanged, this, &MacAddressController_win::onNetworkChange);
+    connect(networkDetectionManager_, &INetworkDetectionManager::networkChanged, this, &MacAddressController_win::onNetworkChange);
 }
 
 MacAddressController_win::~MacAddressController_win()
@@ -70,15 +72,14 @@ void MacAddressController_win::setMacAddrSpoofing(const types::MacAddrSpoofing &
         }
 
         if (removeSpoof) {
-            networkDetectionManager_->removeMacAddressSpoof(networkInterface.interfaceIndex);
-            if (!interfacesToReset.contains(networkInterface.interfaceIndex) && networkDetectionManager_->interfaceEnabled(networkInterface.interfaceIndex)) {
-                interfacesToReset.append(networkInterface.interfaceIndex);
-            }
+            removeMacAddressSpoof(networkInterface.interfaceIndex);
+            interfacesToReset.append(networkInterface.interfaceIndex);
         }
     }
 
     // Check if we need to apply a manual spoof.
-    if (macAddrSpoofing.isEnabled && !spoofIndex.has_value() && selectedInterface.interfaceIndex == currentAdapter.interfaceIndex) {
+    if (macAddrSpoofing.isEnabled && !spoofIndex.has_value() && selectedInterface.interfaceIndex == currentAdapter.interfaceIndex
+        && NetworkUtils_win::hasPhysicalConnector(currentAdapter.interfaceIndex)) {
         // User changed enabled state, mac address or interface
         if (!macAddrSpoofing_.isEnabled || macAddrSpoofing.macAddress != macAddrSpoofing_.macAddress ||
             selectedInterface.interfaceIndex != macAddrSpoofing_.selectedNetworkInterface.interfaceIndex)
@@ -94,10 +95,8 @@ void MacAddressController_win::setMacAddrSpoofing(const types::MacAddrSpoofing &
         // Only attempt to apply the spoof if we have a MAC address to spoof with.
         if (!macAddrSpoofing.macAddress.isEmpty()) {
             qCInfo(LOG_BASIC) << "Attempting spoof on interface:" << lastSpoofIndex_;
-            networkDetectionManager_->applyMacAddressSpoof(lastSpoofIndex_, macAddrSpoofing.macAddress);
-            if (!interfacesToReset.contains(lastSpoofIndex_) && networkDetectionManager_->interfaceEnabled(lastSpoofIndex_)) {
-                interfacesToReset.append(lastSpoofIndex_);
-            }
+            applyMacAddressSpoof(lastSpoofIndex_, macAddrSpoofing.macAddress);
+            interfacesToReset.append(lastSpoofIndex_);
         }
     }
 
@@ -105,7 +104,7 @@ void MacAddressController_win::setMacAddrSpoofing(const types::MacAddrSpoofing &
 
     for (const int indexToReset : interfacesToReset) {
         networksBeingUpdated_.append(indexToReset);
-        networkDetectionManager_->resetAdapter(indexToReset);
+        resetAdapter(indexToReset);
     }
 
     autoRotate_ = macAddrSpoofing.isAutoRotate;
@@ -143,10 +142,11 @@ void MacAddressController_win::onNetworkChange(types::NetworkInterface /*network
         types::MacAddrSpoofing updatedMacAddrSpoofing = macAddrSpoofing_;
         bool setSpoofing = false;
 
-        if (networkInterfaces != updatedMacAddrSpoofing.networkInterfaces) {
+        const QVector<types::NetworkInterface> spoofable = NetworkUtils_win::spoofableNetworkInterfaces(networkInterfaces);
+        if (spoofable != updatedMacAddrSpoofing.networkInterfaces) {
             // An adapter has been added/removed/disabled/enabled, or the settings of an existing adapter have changed (e.g. changed wi-fi networks).
-            qCInfo(LOG_BASIC) << "Current active adapters: " << NetworkUtils::networkInterfacesToString(networkInterfaces, true);
-            updatedMacAddrSpoofing.networkInterfaces = networkInterfaces;
+            qCInfo(LOG_BASIC) << "Current active adapters: " << NetworkUtils::networkInterfacesToString(spoofable, true);
+            updatedMacAddrSpoofing.networkInterfaces = spoofable;
             setSpoofing = true;
         }
 
@@ -154,9 +154,7 @@ void MacAddressController_win::onNetworkChange(types::NetworkInterface /*network
             // If we've changed wifi networks, re-enabled an adapter, or plugged a network cable back in, the last inteface
             // will be the 'no interface'.
             if (types::NetworkInterface::isNoNetworkInterface(lastNetworkInterface_.interfaceIndex)) {
-                if (currentAdapter.interfaceIndex == updatedMacAddrSpoofing.selectedNetworkInterface.interfaceIndex &&
-                    networkDetectionManager_->interfaceEnabled(currentAdapter.interfaceIndex))
-                {
+                if (currentAdapter.interfaceIndex == updatedMacAddrSpoofing.selectedNetworkInterface.interfaceIndex) {
                     qCInfo(LOG_BASIC) << "MacAddressController detected spoofed adapter state/network change, new MAC address auto-generated";
                     updatedMacAddrSpoofing.macAddress = NetworkUtils::generateRandomMacAddress();
                     actuallyAutoRotate_ = true;
@@ -170,6 +168,35 @@ void MacAddressController_win::onNetworkChange(types::NetworkInterface /*network
             emit macAddrSpoofingChanged(updatedMacAddrSpoofing);
         }
     }
+}
+
+void MacAddressController_win::applyMacAddressSpoof(int ifIndex, const QString &macAddress)
+{
+    QString interfaceSubkeyN = NetworkUtils_win::interfaceSubkeyName(ifIndex);
+
+    if (interfaceSubkeyN != "") {
+        helper_->setMacAddressRegistryValueSz(interfaceSubkeyN, macAddress);
+    } else {
+        qCWarning(LOG_BASIC) << "Apply MacAddress Failed. Couldn't find adapter in Registry matching interface " << ifIndex;
+    }
+}
+
+void MacAddressController_win::removeMacAddressSpoof(int ifIndex)
+{
+    qCInfo(LOG_BASIC) << "Removing spoof on interface: " << ifIndex;
+    QString interfaceSubkeyN = NetworkUtils_win::interfaceSubkeyName(ifIndex);
+
+    if (interfaceSubkeyN != "") {
+        helper_->removeMacAddressRegistryProperty(interfaceSubkeyN);
+    } else {
+        qCWarning(LOG_BASIC) << "Remove MacAddress failed. Couldn't find adapter in Registry matching interface " << ifIndex;
+    }
+}
+
+void MacAddressController_win::resetAdapter(int ifIndex)
+{
+    qCInfo(LOG_BASIC) << "Resetting interface: " << ifIndex;
+    helper_->resetNetworkAdapter(ifIndex, true);
 }
 
 void MacAddressController_win::checkMacSpoofAppliedCorrectly()

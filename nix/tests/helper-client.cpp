@@ -26,7 +26,7 @@ int main(int argc, char **argv)
                     ? std::vector<std::string>{"0.0.0.0/0", "100.72.0.0/16", "::/0", "fd7a:115c:a1e0::/64"}
                     : std::vector<std::string>{"100.72.0.0/16", "100.100.100.100", "fd7a:115c:a1e0::/64"},
                 std::vector<std::string>());
-        } else if (action == "connected" || action == "disconnected") {
+        } else if (action == "connected" || action == "connected-openvpn" || action == "disconnected") {
             operation = HelperCommand::sendConnectStatus;
             ADAPTER_GATEWAY_INFO physical, vpn;
             physical.adapterName = "wg-underlay";
@@ -38,7 +38,8 @@ int main(int argc, char **argv)
             vpn.gatewayIp = vpn.adapterIp;
             vpn.gatewayIpV6 = vpn.adapterIpV6;
             vpn.dnsServers = {types::IpAddress("10.255.255.1")};
-            payload = serializeResult(action == "connected", kCmdProtocolWireGuard, physical, vpn,
+            payload = serializeResult(action != "disconnected",
+                action == "connected-openvpn" ? kCmdProtocolOpenvpn : kCmdProtocolWireGuard, physical, vpn,
                 types::IpAddress("198.18.0.2"), types::IpAddress("198.18.0.2"), std::vector<std::string>());
         } else if (action == "firewall-on") {
             operation = HelperCommand::setFirewallRules;
@@ -78,7 +79,7 @@ int main(int argc, char **argv)
             payload = serializeResult(privateKey, std::string(action == "awg-configure" ? "10.77.0.2/32" : "10.77.0.2/32,fd77::2/128"),
                 std::string("10.255.255.1"), publicKey, presharedKey,
                 std::string("198.18.0.2:51820"), std::string(action == "awg-configure" ? "0.0.0.0/0" : "0.0.0.0/0,::/0"),
-                uint16_t(51821), kSystemdResolved, obfuscation);
+                uint16_t(51821), kSystemdResolved, obfuscation, std::string("25"), true);
         } else {
             return 2;
         }

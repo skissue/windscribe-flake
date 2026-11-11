@@ -2,12 +2,12 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QMouseEvent>
-#include <QRandomGenerator>
 #include <QScreen>
 #include <QStyleHints>
 #include <QThread>
@@ -157,6 +157,11 @@ MainWindow::MainWindow() :
     connect(backend_, &Backend::robertFiltersChanged, this, &MainWindow::onBackendRobertFiltersChanged);
     connect(backend_, &Backend::bridgeApiAvailabilityChanged, this, &MainWindow::onBackendBridgeApiAvailabilityChanged);
     connect(backend_, &Backend::ipRotateResult, this, &MainWindow::onBackendIpRotateResult);
+    connect(backend_, &Backend::ipRotateStarted, this, &MainWindow::onBackendIpRotateReadyChanged);
+    connect(backend_, &Backend::ipRotateResult, this, &MainWindow::onBackendIpRotateReadyChanged);
+    connect(backend_, &Backend::ipRotateCooldownFinished, this, &MainWindow::onBackendIpRotateReadyChanged);
+    connect(backend_->locationsModelManager()->locationsModel(), &QAbstractItemModel::dataChanged, this,
+            &MainWindow::onLocationsModelDataChanged);
     connect(backend_, &Backend::clearWifiHistoryFinished, this, &MainWindow::onBackendClearWifiHistoryFinished);
     connect(backend_, &Backend::setRobertFilterResult, this, &MainWindow::onBackendSetRobertFilterResult);
     connect(backend_, &Backend::protocolStatusChanged, this, &MainWindow::onBackendProtocolStatusChanged);
@@ -179,19 +184,16 @@ MainWindow::MainWindow() :
     connect(backend_->getPreferences(), &Preferences::isShowNotificationsChanged, this, &MainWindow::onPreferencesShowNotificationsChanged);
 
     localIpcServer_ = new LocalIPCServer(backend_, this);
-    connect(localIpcServer_, &LocalIPCServer::showLocations, this, &MainWindow::onIpcOpenLocations);
     connect(localIpcServer_, &LocalIPCServer::connectToLocation, this, &MainWindow::onIpcConnect);
-    connect(localIpcServer_, &LocalIPCServer::connectToStaticIpLocation, this, &MainWindow::onIpcConnectStaticIp);
     connect(localIpcServer_, &LocalIPCServer::attemptLogin, this, &MainWindow::onLoginClick);
     connect(localIpcServer_, &LocalIPCServer::update, this, &MainWindow::onIpcUpdate);
-    connect(localIpcServer_, &LocalIPCServer::pinIp, this, &MainWindow::onPinIp);
-    connect(localIpcServer_, &LocalIPCServer::unpinIp, this, &MainWindow::onUnpinIp);
 
     soundManager_ = new SoundManager(this, backend_->getPreferences());
 
     mainWindowController_ = new MainWindowController(this, locationsWindow_, backend_->getPreferencesHelper(), backend_->getPreferences(), backend_->getAccountInfo(), soundManager_);
 
-    mainWindowController_->getConnectWindow()->updateMyIp(PersistentState::instance().lastExternalIp());
+    myIp_ = PersistentState::instance().lastExternalIp();
+    mainWindowController_->getConnectWindow()->updateMyIp(myIp_);
     mainWindowController_->getConnectWindow()->updateNotificationsState(notificationsController_.totalMessages(), notificationsController_.unreadMessages());
     mainWindowController_->getConnectWindow()->connect(
         &notificationsController_, &NotificationsController::stateChanged,
@@ -1054,76 +1056,24 @@ void MainWindow::onConnectWindowRotateIpClick()
 
 void MainWindow::onPinIp()
 {
-    QString ip = mainWindowController_->getConnectWindow()->getIpAddress();
-
-    if (!selectedLocation_->isValid()) {
+    const QString ip = mainWindowController_->getConnectWindow()->getIpAddress();
+    if (backend_->isAwaitingRotatedIp()) {
+        qCInfo(LOG_BASIC) << "Not pinning IP" << ip << ": a rotation is replacing it";
         return;
     }
-
-    LocationID locationId = selectedLocation_->locationdId();
-    if (!locationId.isValid()) {
+    const QString hostname = backend_->getCurrentConnectingHostname();
+    if (!selectedLocation_->isValid() || !backend_->locationsModelManager()->pinIp(selectedLocation_->locationdId(), hostname, ip)) {
+        qCWarning(LOG_BASIC) << "Could not pin IP" << ip;
         return;
     }
-
-    // If the selected location is "Best Location", convert to the actual API location
-    if (locationId.isBestLocation()) {
-        locationId = locationId.bestLocationToApiLocation();
-        if (!locationId.isValid()) {
-            return;
-        }
-    }
-
-    QModelIndex locationIndex = static_cast<gui_locations::LocationsModel*>(backend_->locationsModelManager()->locationsModel())->getIndexByLocationId(locationId);
-    if (!locationIndex.isValid()) {
-        return;
-    }
-
-    // Get the current connecting hostname from backend
-    // Store only the subdomain portion so pinned IPs still work when the server TLD changes.
-    QString hostname = backend_->getCurrentConnectingHostname();
-    int dotIndex = hostname.indexOf('.');
-    if (dotIndex != -1) {
-        hostname = hostname.left(dotIndex);
-    }
-
-    // Add to favorites with hostname and IP via kPinnedIp role
-    QVariantList pinnedData;
-    pinnedData << hostname << ip;
-    backend_->locationsModelManager()->locationsModel()->setData(locationIndex, pinnedData, gui_locations::Roles::kPinnedIp);
     qCDebug(LOG_BASIC) << "Pinning IP" << ip << "for hostname" << hostname;
-    mainWindowController_->getConnectWindow()->updateMyIp(mainWindowController_->getConnectWindow()->getIpAddress(), true);
 }
 
 void MainWindow::onUnpinIp(const QString &ip)
 {
-    // Search through favorites to find matching location by IP
-    LocationID locationId;
-    for (int i = 0; i < backend_->locationsModelManager()->favoriteCitiesProxyModel()->rowCount(); i++) {
-        QModelIndex miFavorite = backend_->locationsModelManager()->favoriteCitiesProxyModel()->index(i, 0);
-        QVariantList pinnedData = miFavorite.data(gui_locations::kPinnedIp).toList();
-        if (pinnedData.size() == 2 && pinnedData[1].toString() == ip) {
-            locationId = qvariant_cast<LocationID>(miFavorite.data(gui_locations::kLocationId));
-            break;
-        }
+    if (backend_->locationsModelManager()->unpinIp(ip)) {
+        qCDebug(LOG_BASIC) << "Unpinned IP" << ip;
     }
-
-    if (!locationId.isValid()) {
-        return;
-    }
-
-    gui_locations::LocationsModel* locationsModel = static_cast<gui_locations::LocationsModel*>(backend_->locationsModelManager()->locationsModel());
-    QModelIndex locationIndex = locationsModel->getIndexByLocationId(locationId);
-
-    if (!locationIndex.isValid()) {
-        return;
-    }
-
-    QVariantList pinnedData;
-    pinnedData << QString() << QString();
-    // Remove pinned IP & favorite status
-    backend_->locationsModelManager()->locationsModel()->setData(locationIndex, pinnedData, gui_locations::Roles::kPinnedIp);
-    backend_->locationsModelManager()->locationsModel()->setData(locationIndex, false, gui_locations::Roles::kIsFavorite);
-    mainWindowController_->getConnectWindow()->updateMyIp(ip, false);
 }
 
 void MainWindow::onConnectWindowNotificationsClick()
@@ -1718,13 +1668,6 @@ void MainWindow::onBackendInitFinished(INIT_STATE initState)
         // slot does not call into the Engine before it is initialized.
         permissionMonitor_ = new PermissionMonitor_mac(this);
         connect(permissionMonitor_, &PermissionMonitor_mac::locationPermissionUpdated, this, &MainWindow::onLocationPermissionUpdated);
-
-        // on MacOS 14.4 and later, MAC spoofing no longer works.  If it was enabled, disable the feature.
-        if (MacUtils::isOsVersionAtLeast(14, 4) && p->macAddrSpoofing().isEnabled) {
-            types::MacAddrSpoofing mas = p->macAddrSpoofing();
-            mas.isEnabled = false;
-            p->setMacAddrSpoofing(mas);
-        }
 #endif
 
         // enable wifi/proxy sharing, if checked
@@ -2128,45 +2071,36 @@ void MainWindow::onBackendCheckUpdateChanged(const api_responses::CheckUpdate &c
 
 void MainWindow::onBackendMyIpChanged(QString ip, bool isFromDisconnectedState)
 {
+    myIp_ = ip;
     bool isPinned = false;
-    if (selectedLocation_->isValid()) {
-        LocationID locationId = selectedLocation_->locationdId();
+    const QModelIndex locationIndex = selectedApiLocationIndex();
+    if (locationIndex.isValid()) {
+        QVariantList pinnedData = locationIndex.data(gui_locations::kPinnedIp).toList();
+        QString pinnedIp;
+        if (pinnedData.size() == 2) {
+            pinnedIp = pinnedData[1].toString();  // IP is the second element
+        }
+        isPinned = !pinnedIp.isEmpty() && pinnedIp == ip;
 
-        // If this is Best Location, convert to the actual API location
-        if (locationId.isBestLocation()) {
-            locationId = locationId.bestLocationToApiLocation();
+        // Show alert only on the initial IP after connecting (not on subsequent rotations)
+        // if location has a pinned IP but the actual IP is different, indicating either the node is not available,
+        // or the pin IP action failed.
+        // No alert when API token requests are suppressed -- the engine doesn't attempt the pin.
+        if (!isFromDisconnectedState && !receivedInitialIpAfterConnect_ && !pinnedIp.isEmpty() && !isPinned
+            && !ExtraConfig::instance().getSuppressApiToken()) {
+            GeneralMessageController::instance().showMessage(
+                "garry_tools",
+                tr("Could not pin IP"),
+                tr("We could not set your favourite IP for this location.  Try again later."),
+                GeneralMessageController::tr(GeneralMessageController::kOk),
+                "",
+                ""
+            );
         }
 
-        if (locationId.isValid()) {
-            QModelIndex locationIndex = static_cast<gui_locations::LocationsModel*>(backend_->locationsModelManager()->locationsModel())->getIndexByLocationId(locationId);
-            if (locationIndex.isValid()) {
-                QVariantList pinnedData = backend_->locationsModelManager()->locationsModel()->data(locationIndex, gui_locations::kPinnedIp).toList();
-                QString pinnedIp;
-                if (pinnedData.size() == 2) {
-                    pinnedIp = pinnedData[1].toString();  // IP is the second element
-                }
-                isPinned = (pinnedIp == ip);
-
-                // Show alert only on the initial IP after connecting (not on subsequent rotations)
-                // if location has a pinned IP but the actual IP is different, indicating either the node is not available, or the pin IP action failed.
-                // No alert when API token requests are suppressed -- the engine doesn't attempt the pin.
-                if (!isFromDisconnectedState && !receivedInitialIpAfterConnect_ && !pinnedIp.isEmpty() && !isPinned
-                    && !ExtraConfig::instance().getSuppressApiToken()) {
-                    GeneralMessageController::instance().showMessage(
-                        "garry_tools",
-                        tr("Could not pin IP"),
-                        tr("We could not set your favourite IP for this location.  Try again later."),
-                        GeneralMessageController::tr(GeneralMessageController::kOk),
-                        "",
-                        ""
-                    );
-                }
-
-                // Mark that we've received the initial IP after connecting
-                if (!isFromDisconnectedState && !receivedInitialIpAfterConnect_) {
-                    receivedInitialIpAfterConnect_ = true;
-                }
-            }
+        // Mark that we've received the initial IP after connecting
+        if (!isFromDisconnectedState && !receivedInitialIpAfterConnect_) {
+            receivedInitialIpAfterConnect_ = true;
         }
     }
 
@@ -2183,6 +2117,7 @@ void MainWindow::onBackendMyIpChanged(QString ip, bool isFromDisconnectedState)
 
 void MainWindow::onBackendConnectStateChanged(const types::ConnectState &connectState)
 {
+    splitTunnelFailurePolicy_.onConnectionStateChanged(connectState.connectState);
     mainWindowController_->getConnectWindow()->updateConnectState(connectState);
 
     if (connectState.location.isValid()) {
@@ -2859,9 +2794,8 @@ void MainWindow::onBackendBridgeApiAvailabilityChanged(bool enableIpUtils)
 
 void MainWindow::onBackendIpRotateResult(bool success)
 {
-    mainWindowController_->getConnectWindow()->onIpRotateResult(success);
-
-    if (!success) {
+    // A rotation cut short by the connection going down is not the API turning it down.
+    if (!success && backend_->currentConnectState() == CONNECT_STATE_CONNECTED) {
         GeneralMessageController::instance().showMessage(
             "garry_tools",
             tr("Could not rotate IP"),
@@ -2874,6 +2808,35 @@ void MainWindow::onBackendIpRotateResult(bool success)
             }
         );
     }
+}
+
+void MainWindow::onBackendIpRotateReadyChanged()
+{
+    mainWindowController_->getConnectWindow()->setIpRotateReady(backend_->isIpRotateReady());
+}
+
+void MainWindow::onLocationsModelDataChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight, const QList<int> &roles)
+{
+    Q_UNUSED(topLeft);
+    Q_UNUSED(bottomRight);
+    // Pins are also changed from the command line, which the IP menu has to reflect. No roles means all of them changed.
+    if (roles.isEmpty() || roles.contains(gui_locations::kPinnedIp)) {
+        const QVariantList pinnedData = selectedApiLocationIndex().data(gui_locations::kPinnedIp).toList();
+        const bool isPinned = !myIp_.isEmpty() && pinnedData.size() == 2 && pinnedData[1].toString() == myIp_;
+        mainWindowController_->getConnectWindow()->updateMyIp(myIp_, isPinned);
+    }
+}
+
+QModelIndex MainWindow::selectedApiLocationIndex() const
+{
+    if (!selectedLocation_->isValid()) {
+        return QModelIndex();
+    }
+    LocationID locationId = selectedLocation_->locationdId();
+    if (locationId.isBestLocation()) {
+        locationId = locationId.bestLocationToApiLocation();
+    }
+    return locationId.isValid() ? backend_->locationsModelManager()->getIndexByLocationId(locationId) : QModelIndex();
 }
 
 void MainWindow::onBackendClearWifiHistoryFinished(bool bSuccess)
@@ -2933,11 +2896,22 @@ void MainWindow::onBackendUpdateVersionChanged(uint progressPercent, UPDATE_VERS
 {
     // qDebug() << "Mainwindow::onBackendUpdateVersionChanged: " << progressPercent << ", " << state;
 
+    // Only the update window's Cancel asks for a cancel, and it resets the window itself; acting on the late report could
+    // reset a download started again since.
+    if (state == UPDATE_VERSION_STATE_DONE && error == UPDATE_VERSION_ERROR_CANCELLED) {
+        return;
+    }
+
     if (state == UPDATE_VERSION_STATE_DONE) {
         if (downloadRunning_) { // not cancelled by user
             if (error == UPDATE_VERSION_ERROR_NO_ERROR) {
                 isExitingAfterUpdate_ = true; // the flag for prevent firewall off for some states
                 // nothing todo, because installer will close app here
+            } else if (error == UPDATE_VERSION_ERROR_ELEVATION_DECLINED) {
+                // Declining the permission prompt is a cancel, so return to the update prompt without an error message.
+                mainWindowController_->getUpdateAppItem()->setProgress(0);
+                mainWindowController_->getUpdateWindow()->stopAnimation();
+                mainWindowController_->getUpdateWindow()->changeToPromptScreen();
             } else {
                 QString titleText = tr("Auto-Update Failed");
                 QString descText;
@@ -3294,80 +3268,9 @@ void MainWindow::onAppShouldTerminate()
     close();
 }
 
-void MainWindow::onIpcOpenLocations(IPC::CliCommands::LocationType type)
-{
-
-    if (downloadRunning_ ||
-        mainWindowController_->currentWindow() == MainWindowController::WINDOW_ID_GENERAL_MESSAGE ||
-        mainWindowController_->currentWindow() == MainWindowController::WINDOW_ID_LOGOUT ||
-        mainWindowController_->currentWindow() == MainWindowController::WINDOW_ID_EXIT ||
-        !isLoginOkAndConnectWindowVisible_)
-    {
-        // App is updating, or alert is being shown, or not logged in.  Ignore the command.
-        return;
-    }
-
-    activateAndShow();
-
-#ifdef Q_OS_MACOS
-    // Strange bug on Mac that causes flicker when activateAndShow() is called from a minimized state
-    // calling hide() first seems to fix
-    hide();
-    activateAndShow();
-#endif
-
-    if (mainWindowController_->isPreferencesVisible()) {
-        collapsePreferences();
-    } else if (mainWindowController_->isNewsFeedVisible()) {
-        mainWindowController_->collapseNewsFeed();
-    } else if (mainWindowController_->currentWindow() == MainWindowController::WINDOW_ID_UPDATE) {
-        mainWindowController_->changeWindow(MainWindowController::WINDOW_ID_CONNECT);
-        mainWindowController_->getUpdateAppItem()->setMode(UpdateApp::UpdateAppItem::UPDATE_APP_ITEM_MODE_PROMPT);
-        mainWindowController_->getUpdateAppItem()->setProgress(0);
-    } else if (mainWindowController_->currentWindow() != MainWindowController::WINDOW_ID_CONNECT) {
-        mainWindowController_->changeWindow(MainWindowController::WINDOW_ID_CONNECT);
-    }
-
-    // TODO: replace this delay with something less hacky
-    // There is a race condition when CLI tries to expand the locations
-    // from a CLI-spawned-GUI (Win): the location foreground doesn't appear, only the location's shadow
-    // from a CLI-spawned-GUI (Mac): could fail WS_ASSERT(curWindow_ == WINDOW_ID_CONNECT) in expandLocations
-    QTimer::singleShot(500, [this, type](){
-        mainWindowController_->expandLocations();
-        if (type == IPC::CliCommands::LocationType::kStaticIp) {
-            mainWindowController_->getLocationsWindow()->setTab(LOCATION_TAB_STATIC_IPS_LOCATIONS);
-        } else if (type == IPC::CliCommands::LocationType::kFavourite) {
-            mainWindowController_->getLocationsWindow()->setTab(LOCATION_TAB_FAVORITE_LOCATIONS);
-        } else {
-            mainWindowController_->getLocationsWindow()->setTab(LOCATION_TAB_ALL_LOCATIONS);
-        }
-    });
-}
-
 void MainWindow::onIpcConnect(const LocationID &id, const types::Protocol &protocol, uint port)
 {
     selectLocation(id, protocol, port);
-}
-
-void MainWindow::onIpcConnectStaticIp(const QString &location, const types::Protocol &protocol, uint port)
-{
-    QList<LocationID> list;
-
-    for (int i = 0; i < backend_->locationsModelManager()->staticIpsProxyModel()->rowCount(); i++) {
-        QModelIndex miStatic = backend_->locationsModelManager()->staticIpsProxyModel()->index(i, 0);
-
-        // If location doesn't match either the location nor IP, skip this entry
-        if (location != miStatic.data(gui_locations::kName).toString() && location != miStatic.data(gui_locations::kNick).toString()) {
-            continue;
-        }
-
-        list << qvariant_cast<LocationID>(miStatic.data(gui_locations::kLocationId));
-    }
-
-    if (list.size() > 0) {
-        // Randomly pick one of the candidates
-        onIpcConnect(list[QRandomGenerator::global()->bounded(list.size())], protocol, port);
-    }
 }
 
 void MainWindow::onAppCloseRequest()
@@ -3424,24 +3327,6 @@ void MainWindow::onTrayActivated(QSystemTrayIcon::ActivationReason reason)
             } else {
                 deactivateAndHide();
                 setBackendAppActiveState(false);
-            }
-            break;
-#elif defined(Q_OS_MACOS)
-        case QSystemTrayIcon::Trigger:
-        case QSystemTrayIcon::DoubleClick:
-            deactivationTimer_.stop();
-            if (backend_->getPreferences()->isDockedToTray()) {
-                onDockIconClicked();
-            } else {
-                // WORKAROUND (Qt 6.11.1 / macOS 27): pop the menu manually instead of relying on a
-                // native context menu attached to the status item. See the setContextMenu guard in
-                // TrayIcon's constructor. Revert to the shared handling once Qt is fixed upstream.
-                trayIcon_->showTrayMenu();
-            }
-            break;
-        case QSystemTrayIcon::Context:
-            if (!backend_->getPreferences()->isDockedToTray()) {
-                trayIcon_->showTrayMenu();
             }
             break;
 #else
@@ -3682,19 +3567,11 @@ void MainWindow::handleDisconnectWithError(const types::ConnectState &connectSta
             mainWindowController_->getConnectWindow()->updateLocationInfo(selectedLocation_->firstName(), selectedLocation_->secondName(),
                                                                           selectedLocation_->countryCode(), selectedLocation_->pingTime(),
                                                                           selectedLocation_->locationdId().isCustomConfigsLocation());
-            onConnectWindowConnectClick();
+            mainWindowController_->collapseLocations();
+            backend_->sendAutomaticConnect(selectedLocation_->locationdId());
         } else {
             qCWarning(LOG_BASIC) << "Best Location not exist or no active nodes, goto disconnected mode";
         }
-        return;
-    } else if (connectState.connectError == ConnectError::kHostsFileNotWritable) {
-        GeneralMessageController::instance().showMessage("WARNING_WHITE",
-                                               tr("Read-Only File"),
-                                               tr("Your hosts file is read-only. IKEv2 connectivity requires for it to be writable. Fix the issue automatically?"),
-                                               GeneralMessageController::tr(GeneralMessageController::kYes),
-                                               GeneralMessageController::tr(GeneralMessageController::kNo),
-                                               "",
-                                               [this](bool b) { if (backend_) backend_->sendMakeHostsFilesWritableWin(); });
         return;
 #ifdef Q_OS_MACOS
     } else if (connectState.connectError == ConnectError::kBlockedByOsPolicy) {
@@ -3716,6 +3593,9 @@ void MainWindow::handleDisconnectWithError(const types::ConnectState &connectSta
                                                                           selectedLocation_->locationdId().isCustomConfigsLocation());
         }
         msg = tr("The custom configuration could not be loaded.  Please check that it’s correct or contact support.");
+        if (!connectState.connectErrorDetail.isEmpty()) {
+            msg += QString("\n\n") + connectState.connectErrorDetail;
+        }
     } else if (connectState.connectError == ConnectError::kDnsServiceStartFailure) {
         // Couldn't start ctrld.  Is there an existing local DNS service?
         if (NetworkUtils::DnsChecker::checkAvailabilityBlocking()) {
@@ -3768,11 +3648,17 @@ void MainWindow::handleDisconnectWithError(const types::ConnectState &connectSta
                 }
             });
         return;
+    } else if (connectState.connectError == ConnectError::kHostsFileNotWritable) {
+        msg = tr("Windscribe could not update your hosts file, which IKEv2 requires. Another program, such as antivirus or endpoint"
+                 " security software, may be blocking changes to it. Please try again, or use a different connection mode.");
     } else if (connectState.connectError == ConnectError::kOSServiceUnavailable) {
         msg = tr("The Remote Access Connection Manager (RasMan) service is not running and could not be started. This prevents IKEv2 from being used on this PC."
                  " Please try another connection mode or investigate why this core Windows service is unable to start.");
     } else {
         msg = tr("An unexpected error occurred establishing the VPN connection (Error %1).  If this error persists, try using a different protocol or contact support.").arg(static_cast<int>(connectState.connectError));
+        if (!connectState.connectErrorDetail.isEmpty()) {
+            msg += QString("\n\n") + connectState.connectErrorDetail;
+        }
     }
 
     GeneralMessageController::instance().showMessage("ERROR_ICON",
@@ -3960,30 +3846,29 @@ void MainWindow::onSelectedLocationRemoved()
 
 void MainWindow::onSplitTunnelingStartFailed(SPLIT_TUNNEL_START_FAIL_REASON reason)
 {
-    // The connect-status path emits this on any post-connect helper failure, which is not specific to
-    // split tunneling; ignore it entirely unless the feature is actually on, so a user who never
-    // enabled split tunneling is not shown a "split tunneling could not be started" dialog.  This gate
-    // is also what dedups overlapping failures: the disable below clears the flag synchronously, so a
-    // second emission arriving while the dialog is still up returns here rather than relying on the
-    // alert system to suppress a duplicate.
-    if (!backend_->getPreferences()->splitTunnelingSettings().active) {
+    const auto action = splitTunnelFailurePolicy_.handle(reason, backend_->getPreferences()->splitTunnelingSettings().active);
+    if (action.disable) {
+        // The connect-window toggle has its own signal, separate from the Preferences setting.
+        types::SplitTunnelingSettings settings = backend_->getPreferences()->splitTunnelingSettings();
+        settings.active = false;
+        backend_->getPreferences()->setSplitTunnelingSettings(settings);
+        mainWindowController_->getConnectWindow()->setSplitTunnelingState(false);
+    }
+    if (!action.show) {
         return;
     }
 
-    // Disable the feature at the source of truth right away, before the dialog is shown.  This emits
-    // splitTunnelingChanged, which updates the Preferences UI and notifies the engine; the connect
-    // window toggle is driven by a separate signal, so it is cleared explicitly.
-    types::SplitTunnelingSettings settings = backend_->getPreferences()->splitTunnelingSettings();
-    settings.active = false;
-    backend_->getPreferences()->setSplitTunnelingSettings(settings);
-
-    mainWindowController_->getConnectWindow()->setSplitTunnelingState(false);
-
 #if defined(Q_OS_MACOS)
+    if (reason == SPLIT_TUNNEL_START_FAIL_REASON_MAC_SESSION_ENDED) {
+        GeneralMessageController::instance().showMessage("WARNING_YELLOW",
+            tr("Split Tunneling Stopped"),
+            tr("The split tunneling session ended unexpectedly. Please reconnect to retry. "
+               "If this persists, please contact support."),
+            GeneralMessageController::tr(GeneralMessageController::kOk));
+        return;
+    }
     if (reason == SPLIT_TUNNEL_START_FAIL_REASON_MAC_EXTENSION_NOT_ENABLED) {
-        // The extension couldn't run (disabled in System Settings, or a dead session ambiguous between
-        // a crash and a not-yet-seen disable).  Guide the user to System Settings -- actionable for both
-        // (re-enabling restarts a crashed provider).  Only the connect-status failure falls through.
+        // Only a confirmed disabled or missing extension directs the user to System Settings.
         GeneralMessageController::instance().showMessage("WARNING_YELLOW",
                                                tr("Error Starting Split Tunneling"),
                                                tr("The split tunneling feature has been disabled because the Windscribe split tunnel extension is not enabled in System Settings.  To use this feature, please enable the extension in System Settings, and turn on the feature again."),

@@ -34,7 +34,7 @@
 in
   stdenv.mkDerivation {
     pname = "wsnet";
-    version = "1.5.32";
+    version = "1.5.43";
     src = ../sources/wsnet;
     nativeBuildInputs = [cmake ninja pkg-config];
     buildInputs = [wsOpenSSL wsCurl boost188 c-ares gtest rapidjson spdlog skyr];

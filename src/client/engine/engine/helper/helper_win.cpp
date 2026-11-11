@@ -35,7 +35,8 @@ void Helper_win::setSplitTunnelingSettings(bool isActive, bool isExclude, bool i
 }
 
 bool Helper_win::sendConnectStatus(bool isConnected, bool isTerminateSocket, bool isKeepLocalSocket, const AdapterGatewayInfo &defaultAdapter, const AdapterGatewayInfo &vpnAdapter,
-                               const QString &connectedIp, const types::Protocol &protocol, const QStringList &dnsWhitelistIps)
+                               const QString &connectedIp, const types::Protocol &protocol, const QStringList &dnsWhitelistIps,
+                               bool isVpnSessionActive)
 {
     // Windows carries the DNS-leak whitelist through setCustomDnsWhileConnected (see
     // ConnectionManager::doConnect / Helper_win::setCustomDnsIps), so the whitelist is intentionally
@@ -75,7 +76,8 @@ bool Helper_win::sendConnectStatus(bool isConnected, bool isTerminateSocket, boo
 
     fillAdapterInfo(defaultAdapter, defaultAdapterInfo);
     auto result = sendCommand(HelperCommand::sendConnectStatus, isConnected, isTerminateSocket, isKeepLocalSocket, cmdProtocol, defaultAdapterInfo, vpnAdapterInfo,
-                              types::IpAddress(connectedIp.toStdString()), vpnAdapter.remoteIp());
+                              types::IpAddress(connectedIp.toStdString()), vpnAdapter.remoteIp(),
+                              isConnected || isVpnSessionActive);
 
     bool success = false;
     deserializeAnswer(result, success);
@@ -107,14 +109,18 @@ bool Helper_win::executeTaskKill(CmdKillTarget target)
 }
 
 bool Helper_win::executeOpenVPN(const QString &config, const QString &httpProxy, unsigned int httpPort,
-                                const QString &socksProxy, unsigned int socksPort, unsigned int &outPort, unsigned long &outPid)
+                                const QString &socksProxy, unsigned int socksPort, unsigned int &outPort, unsigned long &outPid,
+                                QString &outDetail)
 {
+    outDetail.clear();
     auto result = sendCommand(HelperCommand::executeOpenVPN, config.toStdWString(), httpProxy.toStdWString(), httpPort,
                               socksProxy.toStdWString(), socksPort);
     bool success = false;
     unsigned int port = 0;
     unsigned long pid = 0;
-    deserializeAnswer(result, success, port, pid);
+    std::string detail;
+    deserializeAnswer(result, success, port, pid, detail);
+    outDetail = QString::fromStdString(detail);
     // Only surface the port/pid on success; on failure the helper may still return a non-zero pid
     // (e.g. a process it spawned then killed), which must not be treated as a live OpenVPN.
     if (success) {
@@ -148,7 +154,19 @@ bool Helper_win::configureWireGuard(const WireGuardConfig &config)
     if (!config.hasValidServerValues()) {
         return false;
     }
-    auto result = sendCommand(HelperCommand::configureWireGuard, config.generateConfigFile().toStdWString());
+    // The helper validates these fields again and is the only author of the service .conf.
+    // Keys stay base64: wireguard-windows reads a config file, not the hex UAPI form POSIX uses.
+    auto result = sendCommand(HelperCommand::configureWireGuard,
+                              config.clientPrivateKey().toStdWString(),
+                              config.clientIpAddress().toStdWString(),
+                              config.clientDnsAddress().toStdWString(),
+                              config.clientListenPort().toStdWString(),
+                              config.peerPublicKey().toStdWString(),
+                              config.peerPresharedKey().toStdWString(),
+                              config.peerEndpoint().toStdWString(),
+                              config.peerAllowedIps().toStdWString(),
+                              config.peerPersistentKeepalive().toStdWString(),
+                              config.amneziawgParamToHelperConfig());
     bool success = false;
     deserializeAnswer(result, success);
     return success;
@@ -392,19 +410,6 @@ void Helper_win::removeAppNetworkProfiles()
 void Helper_win::setIKEv2IPSecParameters()
 {
     sendCommand(HelperCommand::setIKEv2IPSecParameters);
-}
-
-bool Helper_win::makeHostsFileWritable()
-{
-    auto result = sendCommand(HelperCommand::makeHostsFileWritable);
-    bool success = false;
-    deserializeAnswer(result, success);
-    if (success) {
-        qCInfo(LOG_BASIC) << "\"hosts\" file is writable now.";
-    } else {
-        qCWarning(LOG_BASIC) << "Was not able to change \"hosts\" file permissions from read-only.";
-    }
-    return success;
 }
 
 void Helper_win::setCustomDnsIps(const QStringList &ips)

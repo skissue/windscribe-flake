@@ -586,6 +586,18 @@ If you lose your account hash, it&apos;s gone forever and support cannot help yo
 <context>
     <name>MainWindow</name>
     <message>
+        <source>Windscribe could not update your hosts file, which IKEv2 requires. Another program, such as antivirus or endpoint security software, may be blocking changes to it. Please try again, or use a different connection mode.</source>
+        <translation>Windscribe가 IKEv2에 필요한 hosts 파일을 업데이트할 수 없습니다. 바이러스 백신이나 엔드포인트 보안 소프트웨어 등 다른 프로그램이 변경을 차단하고 있을 수 있습니다. 다시 시도하거나 다른 연결 모드를 사용하세요.</translation>
+    </message>
+    <message>
+        <source>Split Tunneling Stopped</source>
+        <translation>분할 터널링 중지됨</translation>
+    </message>
+    <message>
+        <source>The split tunneling session ended unexpectedly. Please reconnect to retry. If this persists, please contact support.</source>
+        <translation>분할 터널링 세션이 예기치 않게 종료되었습니다. 다시 연결하여 재시도하세요. 문제가 지속되면 지원팀에 문의하세요.</translation>
+    </message>
+    <message>
         <source>Logging you in...</source>
         <translation>로그인 중...</translation>
     </message>
@@ -800,14 +812,6 @@ Recovering...</source>
     <message>
         <source>Select an application</source>
         <translation>응용 프로그램 선택</translation>
-    </message>
-    <message>
-        <source>Read-Only File</source>
-        <translation>읽기 전용 파일</translation>
-    </message>
-    <message>
-        <source>Your hosts file is read-only. IKEv2 connectivity requires for it to be writable. Fix the issue automatically?</source>
-        <translation>hosts 파일은 읽기 전용입니다. IKEv2 연결을 사용하려면 hosts 파일이 쓰기 가능해야 합니다. 자동으로 이 문제흘 해결할까요?</translation>
     </message>
     <message>
         <source>The custom configuration could not be loaded.  Please check that it’s correct or contact support.</source>
@@ -1507,10 +1511,6 @@ If the problem persists after a restart, please send a debug log and open a supp
         <translation>LAN 트래픽 허용을 비활성화하면 보안 핫스팟이 작동을 멈춥니다.  핫스팟을 비활성화하시겠습니까?</translation>
     </message>
     <message>
-        <source>MAC spoofing is not supported on your version of MacOS.</source>
-        <translation>MAC 스푸핑은 사용 중인 MacOS 버전에서 지원되지 않습니다.</translation>
-    </message>
-    <message>
         <source>Automatically determine the MTU for your connection, or manually override.  This has no effect on TCP-based protocols.</source>
         <translation>연결에 대한 MTU를 자동으로 결정하거나 수동으로 재정의합니다.  이는 TCP 기반 프로토콜에는 영향을 주지 않습니다.</translation>
     </message>
@@ -1565,7 +1565,7 @@ If the problem persists after a restart, please send a debug log and open a supp
         <translation>가짜 트래픽</translation>
     </message>
     <message>
-        <source>This is an experimental feature that attempts to combat traffic correlation attacks on adversarial networks.When enabled, the app will generate random activity over the tunnel, and upload and download random data at chosen intervals.</source>
+        <source>This is an experimental feature that attempts to combat traffic correlation attacks on adversarial networks. When enabled, the app will generate random activity over the tunnel, and upload and download random data at chosen intervals.</source>
         <translation>이는 적대적 네트워크에서 트래픽의 상관관계를 기반으로 차단하는 경우에 맞서기 위한 실험적 기능입니다. 활성화되면 앱은 터널을 통해 무작위 활동을 생성하고 선택한 간격으로 무작위 데이터를 업로드 및 다운로드합니다.</translation>
     </message>
     <message>
@@ -2378,6 +2378,10 @@ Connect to a network first</source>
 <context>
     <name>PreferencesWindow::SplitTunnelingAppsGroup</name>
     <message>
+        <source>This app is already in the list.</source>
+        <translation>이 앱은 이미 목록에 있습니다.</translation>
+    </message>
+    <message>
         <source>There are too many apps in the list. Please remove some before adding more.</source>
         <translation>목록에 앱이 너무 많습니다. 더 추가하기 전에 일부를 제거하십시오.</translation>
     </message>
@@ -2707,6 +2711,14 @@ If the reinstall does not help, please contact Windscribe support for assistance
         <translation>AmneziaWG init 매개변수에는 유효하지 않은 문자가 포함되어 있습니다</translation>
     </message>
     <message>
+        <source>Invalid AmneziaWG parameter: %1</source>
+        <translation>Invalid AmneziaWG parameter: %1</translation>
+    </message>
+    <message>
+        <source>Invalid &quot;PersistentKeepalive&quot; value</source>
+        <translation>Invalid &quot;PersistentKeepalive&quot; 값</translation>
+    </message>
+    <message>
         <source>Static IPs</source>
         <translation>고정 IP</translation>
     </message>
@@ -2805,6 +2817,10 @@ If the reinstall does not help, please contact Windscribe support for assistance
     <message>
         <source>Alternate</source>
         <translation>대체</translation>
+    </message>
+    <message>
+        <source>Windscribe is already running in another user session on this computer. Quit Windscribe in that session, then try again.</source>
+        <translation>이 컴퓨터의 다른 사용자 세션에서 Windscribe가 이미 실행 중입니다. 해당 세션에서 Windscribe를 종료한 후 다시 시도해 주세요.</translation>
     </message>
 </context>
 <context>

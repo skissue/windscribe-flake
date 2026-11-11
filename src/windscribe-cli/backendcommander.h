@@ -40,8 +40,13 @@ private:
     QElapsedTimer connectingTimer_;
     QElapsedTimer loggedInTimer_;
     bool bCommandSent_ = false;
+    bool isUpdateInstallerRunning_ = false;
     bool bLoggingInMessageShown_ = false;
     QString connectId_ = "";
+    bool isConnectRequestCountKnown_ = false;
+    uint connectRequestCount_ = 0;
+    QString username_;
+    QString password_;
     QString code2fa_ = "";
     QString captchaSolution_;
 

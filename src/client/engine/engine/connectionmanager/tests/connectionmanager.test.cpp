@@ -11,7 +11,6 @@
 #include "engine/connectionmanager/classifyconnecterror.h"
 #include "engine/connectionmanager/connectionmanager.h"
 #include "engine/connectionmanager/connectors/connectionfactory.h"
-#include "engine/connectionmanager/isleepevents.h"
 #include "engine/dns/dnsconfigurator.h"
 #include "engine/helper/helper.h"
 #include "extraconfig_mock.h"
@@ -96,6 +95,7 @@ CurrentConnectionDescr TestConnectionManager::makeIkev2Descr()
     CurrentConnectionDescr d;
     d.connectionNodeType = CONNECTION_NODE_DEFAULT;
     d.protocol = types::Protocol::IKEV2;
+    d.nodeId = 101;
     d.ip = "10.0.0.2";
     d.hostname = "ikev2.example.com";
     d.port = 500;
@@ -200,6 +200,8 @@ void TestConnectionManager::testHappyPathConnect()
     QCOMPARE(hostnameSpy.at(0).at(1).toString(), QString("10.0.0.2"));
     // No connector-carried tunnel DNS (non-WireGuard): the firewall whitelist gets an empty list.
     QCOMPARE(hostnameSpy.at(0).at(2).toStringList(), QStringList());
+    // The identity of the node this attempt dials, straight from the descr.
+    QCOMPARE(hostnameSpy.at(0).at(3).toInt(), 101);
     QCOMPARE(conn->startConnectCount(), 1);
     QVERIFY(!cm_->isStaticIpsLocation());
     QVERIFY(!cm_->connectingTimer_.isActive());
@@ -372,6 +374,27 @@ void TestConnectionManager::testErrorClassificationImmediateStop()
     QCOMPARE(cm_->state_, ConnectionManager::State::kDisconnected);
 }
 
+void TestConnectionManager::testErrorDetailReachesErrorDuringConnection()
+{
+    FakeConnection *conn = startConnecting();
+    QVERIFY(conn);
+
+    QSignalSpy errorSpy(cm_, &ConnectionManager::errorDuringConnection);
+    const QString detail = "Windscribe: directive not permitted in config: up (config.ovpn:12)";
+    conn->driveError(ConnectError::kCustomConfigInvalid, detail);
+
+    QTRY_COMPARE(errorSpy.count(), 1);
+    QCOMPARE(errorSpy.at(0).at(2).toString(), detail);
+
+    // A later error with no daemon text must not reuse the line the connector already handed over.
+    FakeConnection *next = startConnecting();
+    QVERIFY(next);
+    QSignalSpy nextSpy(cm_, &ConnectionManager::errorDuringConnection);
+    next->driveError(ConnectError::kLocalProcessLaunchFailure);
+    QTRY_COMPARE(nextSpy.count(), 1);
+    QVERIFY(nextSpy.at(0).at(2).toString().isEmpty());
+}
+
 void TestConnectionManager::testAuthErrorRetryableWhenNotEmit()
 {
     FakeConnection *conn = connectIkev2();
@@ -502,7 +525,9 @@ void TestConnectionManager::testClassifyConnectErrorMatrix()
     QCOMPARE(classifyConnectError(ConnectError::kNoError, true, false, false), C::Unknown);
     QCOMPARE(classifyConnectError(ConnectError::kLocationUnavailable, true, false, false), C::Unknown);
     QCOMPARE(classifyConnectError(ConnectError::kAccountBlocked, true, false, false), C::Unknown);
-    QCOMPARE(classifyConnectError(ConnectError::kCustomConfigInvalid, true, false, false), C::Unknown);
+    // A daemon-rejected custom config stops immediately in both modes. The dialog shows the fatal line.
+    QCOMPARE(classifyConnectError(ConnectError::kCustomConfigInvalid, true, false, false), C::ErrorImmediately);
+    QCOMPARE(classifyConnectError(ConnectError::kCustomConfigInvalid, false, false, true), C::ErrorImmediately);
     QCOMPARE(classifyConnectError(ConnectError::kLocalConfigGenerationFailure, true, false, false), C::Unknown);
     QCOMPARE(classifyConnectError(ConnectError::kDnsServiceStartFailure, true, false, false), C::Unknown);
     QCOMPARE(classifyConnectError(ConnectError::kBlockedByOsPolicy, true, false, false), C::Unknown);
@@ -1241,6 +1266,31 @@ void TestConnectionManager::testOnlineButNoDefaultAdapterWaitsForNetwork()
     QVERIFY(connectionFactory_->createdCount() > 0);
 }
 
+void TestConnectionManager::testDefaultAdapterDetectedBeforeConnector()
+{
+    // The engine hands the captured adapter to the helper on this signal so exclusive split
+    // tunneling redirects excluded apps before the attempt can bring up tunnel routes (#2048):
+    // it must come before the connector exists, and never carry an empty adapter.
+    QVector<int> createdCountAtEmit;
+    QVector<QString> adapterNames;
+    connect(cm_, &ConnectionManager::defaultAdapterDetected, this, [&](const AdapterGatewayInfo &adapter) {
+        createdCountAtEmit << connectionFactory_->createdCount();
+        adapterNames << adapter.adapterName();
+    });
+
+    platformPolicy_->setDefaultAdapter(AdapterGatewayInfo());
+    startConnecting();
+    QVERIFY(createdCountAtEmit.isEmpty());
+
+    platformPolicy_->setDefaultAdapter(vpnAdapterInfo());
+    cm_->onTimerWaitNetworkConnectivity();
+
+    QCOMPARE(createdCountAtEmit.size(), 1);
+    QCOMPARE(createdCountAtEmit.at(0), 0);
+    QCOMPARE(adapterNames.at(0), vpnAdapterInfo().adapterName());
+    QVERIFY(connectionFactory_->createdCount() > 0);
+}
+
 void TestConnectionManager::testNoWaitPolicyFailsFastWhenOffline()
 {
     // A strategy that opts out of waiting for connectivity (emergency connect) surfaces the failure
@@ -1276,23 +1326,6 @@ void TestConnectionManager::testLockdownModeIkev2Error()
     // clickConnect and leave the reconnection cap timer running.
     QCOMPARE(cm_->state_, ConnectionManager::State::kDisconnected);
     QVERIFY(!cm_->timerReconnection_.isActive());
-}
-
-void TestConnectionManager::testTunnelTestAttemptsZeroSurfacesResult()
-{
-    connectIkev2();
-    QCOMPARE(cm_->state_, ConnectionManager::State::kConnected);
-    // ExtraConfig pins the tunnel-test attempt count to 0: the result is surfaced to the UI as-is
-    // without failing over. Drive it through the tunnel-test seam rather than an on-disk config.
-    ExtraConfigMock::hasTunnelTestAttempts = true;
-    ExtraConfigMock::tunnelTestAttempts = 0;
-
-    QSignalSpy testTunnelSpy(cm_, &ConnectionManager::testTunnelResult);
-    cm_->onTunnelTestResult(false, "");
-
-    QCOMPARE(testTunnelSpy.count(), 1);
-    QCOMPARE(testTunnelSpy.at(0).at(0).toBool(), false);
-    QCOMPARE(cm_->state_, ConnectionManager::State::kConnected);
 }
 
 void TestConnectionManager::testRequestUsernameForwarded()
@@ -1791,6 +1824,53 @@ void TestConnectionManager::testDnsSplitDnsPassesUpstreamsAndHostnames()
     QCOMPARE(dnsConfigurator_->primaryDnsServer(), QString("127.0.0.10"));
     QCOMPARE(dnsConfigurator_->tunnelDnsServers("10.255.255.2"), QStringList() << "1.2.3.4" << "127.0.0.10");
     QCOMPARE(dnsConfigurator_->dnsWhitelistIps(), QStringList() << "127.0.0.10" << "1.2.3.4" << "5.6.7.8");
+}
+
+void TestConnectionManager::testDnsIncompleteSplitDns_data()
+{
+    QTest::addColumn<QString>("primary");
+    QTest::addColumn<QString>("secondary");
+    QTest::addColumn<QStringList>("domains");
+    QTest::addColumn<bool>("proxy");
+    QTest::addColumn<bool>("enabled");
+
+    QTest::newRow("ip-no-domains") << QString("1.1.1.1") << QString("1.0.0.1") << QStringList() << false << true;
+    QTest::newRow("ip-no-secondary") << QString("1.1.1.1") << QString() << QStringList("example.com") << false << true;
+    QTest::newRow("ip-neither") << QString("1.1.1.1") << QString() << QStringList() << false << true;
+    QTest::newRow("doh-no-domains") << QString("https://dns.example.com/query") << QString("1.0.0.1") << QStringList() << true << true;
+    QTest::newRow("doh-no-secondary") << QString("https://dns.example.com/query") << QString() << QStringList("example.com") << true << true;
+    QTest::newRow("ip-disabled") << QString("1.1.1.1") << QString("1.0.0.1")
+                                << QStringList("example.com") << false << false;
+    QTest::newRow("doh-disabled") << QString("https://dns.example.com/query") << QString("1.0.0.1")
+                                 << QStringList("example.com") << true << false;
+}
+
+void TestConnectionManager::testDnsIncompleteSplitDns()
+{
+    QFETCH(QString, primary);
+    QFETCH(QString, secondary);
+    QFETCH(QStringList, domains);
+    QFETCH(bool, proxy);
+    QFETCH(bool, enabled);
+    types::ConnectedDnsInfo info = makeDnsInfo(CONNECTED_DNS_TYPE_CUSTOM, primary);
+    info.isSplitDns = enabled;
+    info.upStream2 = secondary;
+    info.hostnames = domains;
+    QVERIFY(!info.isSplitDnsActive());
+    dnsConfigurator_->setConnectedDnsInfo(info);
+
+    QVERIFY(dnsConfigurator_->prepare());
+    QCOMPARE(ctrldManager_->runCount(), proxy ? 1 : 0);
+    const QString expectedDns = proxy ? QString("127.0.0.10") : primary;
+    QCOMPARE(dnsConfigurator_->primaryDnsServer(), expectedDns);
+    QCOMPARE(dnsConfigurator_->tunnelDnsServers("10.255.255.2"), QStringList(expectedDns));
+    QVERIFY(!info.ctrldPlainUpstreamIps().contains("1.0.0.1"));
+    if (proxy) {
+        QCOMPARE(ctrldManager_->lastUpstream1(), primary);
+        QVERIFY(ctrldManager_->lastUpstream2().isEmpty());
+        QVERIFY(ctrldManager_->lastDomains().isEmpty());
+        QCOMPARE(dnsConfigurator_->dnsWhitelistIps(), QStringList(expectedDns));
+    }
 }
 
 void TestConnectionManager::testDnsDohUpstreamQueries()
@@ -2886,22 +2966,6 @@ void TestConnectionManager::testEmptyWalkFailsWithLocationUnavailable()
     QCOMPARE(connectionFactory_->createdCount(), 0);
 }
 
-void TestConnectionManager::testTunnelTestAttemptsZeroSuccessDropsIp()
-{
-    connectIkev2();
-    ExtraConfigMock::hasTunnelTestAttempts = true;
-    ExtraConfigMock::tunnelTestAttempts = 0;
-
-    QSignalSpy testTunnelSpy(cm_, &ConnectionManager::testTunnelResult);
-    cm_->onTunnelTestResult(true, "203.0.113.7");
-
-    // The attempts-pinned-to-0 escape hatch surfaces the result as-is, without the IP.
-    QCOMPARE(testTunnelSpy.count(), 1);
-    QCOMPARE(testTunnelSpy.at(0).at(0).toBool(), true);
-    QCOMPARE(testTunnelSpy.at(0).at(1).toString(), QString(""));
-    QCOMPARE(cm_->state_, ConnectionManager::State::kConnected);
-}
-
 void TestConnectionManager::testErrorQueuedBeforeSleepIgnoredInSleeping()
 {
     platformPolicy_->setNeedsSleepEventAwareDisconnect(true);
@@ -3341,8 +3405,9 @@ void TestConnectionManager::testUnknownClassificationIsInert()
     QSignalSpy reconnectingSpy(cm_, &ConnectionManager::reconnecting);
     QSignalSpy errorSpy(cm_, &ConnectionManager::errorDuringConnection);
     // A prepare-phase code misrouted through the runtime error signal has no classification and must
-    // not hijack the live attempt.
-    conn->driveError(ConnectError::kCustomConfigInvalid);
+    // not hijack the live attempt. kCustomConfigInvalid is classified: the OpenVPN connector emits
+    // it at runtime when the daemon rejects a custom config.
+    conn->driveError(ConnectError::kConfigFetchFailure);
 
     QTest::qWait(10);
     QCOMPARE(cm_->state_, ConnectionManager::State::kConnecting);

@@ -24,6 +24,14 @@
     fi
     exec ${pkgs.kmod}/bin/modprobe "$@"
   '';
+  ip = pkgs.writeShellScriptBin "ip" ''
+    if [ "$2 $3 $4 $5" = "rule delete priority 4201" ] && [ -e /run/fail-exclusion-delete ]; then
+      touch /run/exclusion-delete-failed
+      echo 'Injected exclusion deletion failure' >&2
+      exit 1
+    fi
+    exec ${pkgs.iproute2}/bin/ip "$@"
+  '';
 in
   pkgs.testers.runNixOSTest {
     name = "windscribe-runtime";
@@ -65,7 +73,7 @@ in
         };
       };
       systemd.services.windscribe-helper = {
-        path = pkgs.lib.mkBefore [modprobe];
+        path = pkgs.lib.mkBefore [modprobe ip];
       };
       virtualisation.memorySize = 2048;
     };
@@ -95,24 +103,33 @@ in
           for user in ["alice", "nobody"]:
               denied = machine.fail(f"runuser -u {user} -- ${client}/bin/helper-client up 2>&1")
               assert "Permission denied" in denied
-          for name in ["Windscribe", "windscribe-cli"]:
-              assert machine.succeed(f"su - alice -c 'command -v {name}'").strip() == f"/run/wrappers/bin/{name}"
-              owner, mode = machine.succeed(f"stat -Lc '%U:%G %a' /run/wrappers/bin/{name}").split()
-              assert owner == "root:windscribe", owner
-              assert int(mode, 8) & 0o7111 == 0o2111, mode
+          assert machine.succeed("su - alice -c 'command -v Windscribe'").strip() == "/run/wrappers/bin/Windscribe"
+          owner, mode = machine.succeed("stat -Lc '%U:%G %a' /run/wrappers/bin/Windscribe").split()
+          assert owner == "root:windscribe", owner
+          assert int(mode, 8) & 0o7111 == 0o2111, mode
+          machine.succeed("test ! -e /run/wrappers/bin/windscribe-cli")
+          mode = machine.succeed("stat -Lc %a ${windscribe}/bin/windscribe-cli").strip()
+          assert int(mode, 8) & 0o6000 == 0, mode
 
       with subtest("packaged OpenVPN starts without privileges or a tunnel"):
           openvpn = "${windscribe}/libexec/windscribe/windscribeopenvpn"
           machine.succeed(f"test -L {openvpn} && test -x {openvpn}")
           version = machine.succeed(f"runuser -u alice -- {openvpn} --version")
           assert version.startswith("OpenVPN ${(pkgs.lib.importJSON ../sources/registry/ports/openvpn/vcpkg.json).version} "), version
-          assert "OpenSSL 4.0.1" in version, version
+          assert "OpenSSL 4.0.3" in version, version
+          assert "enable_plugins=no" in version, version
+          # Exercise the packaged parser, not just the helper's separate allowlist.
+          machine.succeed("printf 'remote 192.0.2.1\\n' > /tmp/parser.ovpn")
+          machine.succeed(f"runuser -u alice -- {openvpn} --config /tmp/parser.ovpn --show-ciphers")
+          machine.succeed("printf 'up /bin/true\\n' >> /tmp/parser.ovpn")
+          rejected = machine.fail(f"runuser -u alice -- {openvpn} --config /tmp/parser.ovpn --show-ciphers 2>&1")
+          assert "Windscribe: directive not permitted in config: up" in rejected, rejected
 
       with subtest("packaged AmneziaWG userspace daemon starts without credentials"):
           amneziawg = "${windscribe}/libexec/windscribe/windscribeamneziawg"
           machine.succeed(f"test -L {amneziawg} && test -x {amneziawg}")
           version = machine.succeed(f"{amneziawg} --version")
-          assert version.startswith("amneziawg-go v0.2.16\n"), version
+          assert version.startswith("amneziawg-go v3.1.20260828\n"), version
           machine.succeed(f"systemd-run --unit=amneziawg-smoke --property=Type=simple --setenv=LOG_LEVEL=debug {amneziawg} -f awg-smoke0")
           machine.wait_until_succeeds("test -S /run/amneziawg/awg-smoke0.sock")
           machine.succeed("ip link show awg-smoke0")
@@ -483,11 +500,24 @@ in
                       stopped_rules = machine.succeed(f"ip {family} rule show")
                       assert "4201:" in stopped_rules and "4204:" in stopped_rules
                       assert "4202:" not in stopped_rules and "4203:" not in stopped_rules
-                  machine.succeed(f"{client} disconnected && {client} split-off && {client} firewall-off")
+                  # Keep the old jumps alive across a protocol switch by failing deletion.
+                  # The non-WG path must not mistake these rules for vanished main-table pins.
+                  machine.succeed("touch /run/fail-exclusion-delete")
+                  machine.succeed(f"{client} disconnected")
+                  machine.succeed("ip link add utun420 type dummy; ip addr add 10.77.0.2/32 dev utun420; ip link set utun420 up")
+                  machine.succeed(f"{client} connected-openvpn")
+                  machine.succeed("test -e /run/exclusion-delete-failed")
+                  for family in ["-4", "-6"]:
+                      assert "4201:" in machine.succeed(f"ip {family} rule show")
+                  # Once deletion works again, disabling split mode must remove all retained
+                  # jumps and their landing rules, even though the active protocol changed.
+                  machine.succeed("rm /run/fail-exclusion-delete /run/exclusion-delete-failed")
+                  machine.succeed(f"{client} split-off && {client} disconnected && {client} firewall-off")
                   for family in ["-4", "-6"]:
                       disconnected_rules = machine.succeed(f"ip {family} rule show")
                       assert "4201:" not in disconnected_rules
                       assert "4204:" not in disconnected_rules
+                  machine.succeed("ip link del utun420")
                   # The legacy bound-route teardown removes the existing default too.
                   machine.succeed("ip route replace default via 192.0.2.2 dev wg-underlay")
           finally:
@@ -569,8 +599,8 @@ in
               return pid
           pid = check_gui()
           output = machine.succeed(alice("windscribe-cli status"))
-          assert "Login state: Logged out" in output, output
-          output = machine.fail(alice("windscribe-cli connect"))
+          assert "Login" in output and "Logged out" in output, output
+          output = machine.fail(alice("windscribe-cli connect 2>&1"))
           assert "Not logged in" in output, output
           machine.copy_from_machine("/tmp/windscribe-gui.log")
           machine.copy_from_machine("/var/log/windscribe/helper.log")
@@ -582,12 +612,12 @@ in
           gui_log = "/home/alice/.local/share/Windscribe/Windscribe2/client.log"
           machine.succeed(f"test -f {gui_log}; rm {gui_log}")
           output = machine.succeed(alice("windscribe-cli status"))
-          assert "Login state: Logged out" in output, output
+          assert "Login" in output and "Logged out" in output, output
           assert check_gui() != pid
           machine.wait_until_succeeds(f"grep -q 'connected to helper socket' {gui_log}")
           machine.succeed(f"grep -q 'IPC server for CLI started' {gui_log}")
           machine.wait_for_text("Get Started")
-          output = machine.fail(alice("windscribe-cli connect"))
+          output = machine.fail(alice("windscribe-cli connect 2>&1"))
           assert "Not logged in" in output, output
           machine.copy_from_machine(gui_log)
           machine.copy_from_machine("/var/log/windscribe/helper.log")

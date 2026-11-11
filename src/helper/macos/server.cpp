@@ -4,12 +4,13 @@
 #include <errno.h>
 #include <filesystem>
 #include <grp.h>
+#include <spdlog/spdlog.h>
 #include <sstream>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <spdlog/spdlog.h>
 #include "../common/io_posix.h"
+#include "appuser.h"
 #include "firewallcontroller.h"
 #include "ipc/helper_security.h"
 #include "process_command.h"
@@ -141,7 +142,7 @@ void Server::run()
         return;
     }
 
-    Utils::createAppUserAndGroup();
+    AppUser::createUserAndGroup();
 
     // Verified rather than assumed: a wrong owner or mode can arrive from outside the helper (an older
     // install, another installer) and cannot be repaired from here, so serve nothing instead.
@@ -160,6 +161,12 @@ void Server::run()
     if (!isRootWritableOnlyIfPresent(vendorParent.c_str())) {
         spdlog::warn("\"{}\" is not writable by root alone; the directories below it are not protected "
                      "from a non-root user", vendorParent);
+    }
+
+    // Every user's app locks this file while it runs, so a second user's app quits instead of taking
+    // over the helper. Writable by all because every user's app must be able to take the lock.
+    if (!IO::ensureRootOwnedFile(WS_MAC_APP_LOCK_FILE, 0666)) {
+        spdlog::error("Failed to create " WS_MAC_APP_LOCK_FILE ": {}", IO::strerror(errno));
     }
 
     std::error_code ec;

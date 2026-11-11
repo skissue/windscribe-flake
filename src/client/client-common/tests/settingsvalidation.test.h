@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QTemporaryDir>
 #include <QTest>
 
 class TestSettingsValidation : public QObject
@@ -19,6 +20,16 @@ private slots:
     void testEngineSettings_resetOnWindowsRelativeCustomOvpnPath();
     void testEngineSettings_oversizeNetworkPreferred();
     void testEngineSettings_outOfRangeDnsPolicy();
+#ifdef CLI_ONLY
+    void testEngineSettings_readsPerNetworkProtocolsFromIni();
+    void testEngineSettings_iniWithoutNetworksClearsPerNetworkProtocols();
+    void testEngineSettings_iniFormatErrorIsLogged();
+    void testEngineSettings_iniMissingKeysUseDefaults();
+    void testGuiSettings_iniMissingKeysUseDefaults();
+    void testConnectionSettings_iniMissingPortUsesProtocolDefault();
+    void testPacketSize_iniInvalidMtuUsesDefault();
+    void testShareProxyGateway_iniInvalidPortUsesDefault();
+#endif
 
     // ProxySettings
     void testProxySettings_resetOnBadHost();
@@ -48,6 +59,9 @@ private slots:
     // PacketSize
     void testPacketSize_resetOnBadMtu();
     void testPacketSize_validNoop();
+#ifdef CLI_ONLY
+    void testPacketSize_readsFromIni();
+#endif
 
     // MacAddrSpoofing
     void testMacAddrSpoofing_badMacDisables();
@@ -55,6 +69,8 @@ private slots:
 
     // ConnectedDnsInfo
     void testConnectedDnsInfo_badUpstream1();
+    void testConnectedDnsInfo_badTlsUpstream();
+    void testConnectedDnsInfo_tlsPersistence();
     void testConnectedDnsInfo_capHostnames();
     void testConnectedDnsInfo_filtersInvalidHostnames();
     void testConnectedDnsInfo_normalizesUnspecifiedUpstream();
@@ -80,6 +96,9 @@ private slots:
     void testSplitTunneling_mixedRouteCapsKeepIpRoutes();
     void testSplitTunneling_dropEmptyFullNameApp();
     void testSplitTunneling_rederivesRouteType();
+    void testSplitTunneling_cleansAppPath();
+    void testSplitTunneling_mergesAppsDifferingOnlyInSeparators();
+    void testSplitTunneling_jsonDropsMissingApp();
 
     // GuiPersistentState
     void testGuiPersistentState_validNoop();
@@ -92,4 +111,7 @@ private slots:
 
     // End-to-end forge round trip
     void testRoundTrip_engineSettings_forgedDnsPolicy();
+
+private:
+    QTemporaryDir settingsDir_;
 };

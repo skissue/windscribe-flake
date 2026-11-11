@@ -202,6 +202,33 @@ void TestOpenVPNConnection::testPrepareCustomConfigInjectsDnsAndClearsCredential
     QVERIFY(conn.password_.isEmpty());
 }
 
+void TestOpenVPNConnection::testRunOpenVpnCustomConfigDetailEmitsCustomConfigInvalid()
+{
+    OpenVPNConnection conn(nullptr, helper_, types::Protocol::OPENVPN_UDP, makeSessionParams());
+    conn.isCustomConfig_ = true;
+    conn.connectErrorDetail_ = "Windscribe: directive not permitted in config: up (config.ovpn:12)";
+
+    QCOMPARE(conn.launchFailureError(), ConnectError::kCustomConfigInvalid);
+    QCOMPARE(conn.takeConnectErrorDetail(), QString("Windscribe: directive not permitted in config: up (config.ovpn:12)"));
+    // Consumed once, so a later error cannot reuse the line.
+    QVERIFY(conn.takeConnectErrorDetail().isEmpty());
+    // The detail is gone, so a repeat of the same failure is a plain launch failure.
+    QCOMPARE(conn.launchFailureError(), ConnectError::kLocalProcessLaunchFailure);
+}
+
+void TestOpenVPNConnection::testRunOpenVpnEmptyDetailEmitsLaunchFailure()
+{
+    OpenVPNConnection conn(nullptr, helper_, types::Protocol::OPENVPN_UDP, makeSessionParams());
+    conn.isCustomConfig_ = true;
+    QCOMPARE(conn.launchFailureError(), ConnectError::kLocalProcessLaunchFailure);
+
+    // An official config keeps the launch-failure code even when the daemon left a fatal line.
+    // The custom-config dialog switches the selected location, which must not happen here.
+    conn.isCustomConfig_ = false;
+    conn.connectErrorDetail_ = "Windscribe: directive not permitted in config: up (config.ovpn:12)";
+    QCOMPARE(conn.launchFailureError(), ConnectError::kLocalProcessLaunchFailure);
+}
+
 void TestOpenVPNConnection::testPrepareInvalidNodeIpFails()
 {
     OpenVPNConnection conn(nullptr, helper_, types::Protocol::OPENVPN_UDP, makeSessionParams());
@@ -246,6 +273,28 @@ void TestOpenVPNConnection::testParsePushReplyNoRedirectGateway()
 
     QVERIFY(!redirect);
     QCOMPARE(QString::fromStdString(info.adapterIpV4().toString()), QString("10.255.255.6"));
+}
+
+void TestOpenVPNConnection::testParsePushReplyIpv6Options()
+{
+    OpenVPNConnection conn(nullptr, helper_, types::Protocol::OPENVPN_UDP, makeSessionParams());
+    // Verbatim from a user report: ifconfig-ipv6 precedes the IPv4 ifconfig, and redirect-gateway
+    // appears twice.
+    const QString reply = ">LOG:1788931456,,PUSH: Received control message: 'PUSH_REPLY,"
+                          "dhcp-option DNS 192.168.101.1,route-ipv6 2000::/3,"
+                          "redirect-gateway def1 bypass-dhcp,redirect-gateway ipv6,tun-ipv6,"
+                          "route-gateway 192.168.101.1,topology subnet,ping 35,ping-restart 180,"
+                          "ifconfig-ipv6 2002:5fd7:2da8:1::29/112 2002:5fd7:2da8:1::1,"
+                          "ifconfig 192.168.101.41 255.255.255.0,peer-id 1,cipher CHACHA20-POLY1305'";
+    AdapterGatewayInfo info;
+    bool redirect = false;
+
+    QVERIFY(conn.parsePushReply(reply, info, redirect));
+
+    QVERIFY(redirect);
+    QCOMPARE(QString::fromStdString(info.adapterIpV4().toString()), QString("192.168.101.41"));
+    QCOMPARE(QString::fromStdString(info.gatewayV4().toString()), QString("192.168.101.1"));
+    QCOMPARE(info.dnsServersAsStringList(), QStringList({"192.168.101.1"}));
 }
 
 void TestOpenVPNConnection::testParsePushReplyMalformed()
@@ -365,6 +414,29 @@ void TestOpenVPNConnection::testSanitizeString()
 
     for (const Row &row : rows) {
         QCOMPARE(OpenVPNConnection::sanitizeString(row.in), row.out);
+    }
+}
+
+void TestOpenVPNConnection::testRedactManagementLine()
+{
+    struct Row {
+        QString in;
+        QString out;
+    };
+    const QVector<Row> rows = {
+        {">LOG:1792769252,D,MANAGEMENT: CMD 'username \"Auth\" \"xq7example-user1\"'",
+         ">LOG:1792769252,D,MANAGEMENT: CMD 'username \"Auth\" \"xq***\"'"},
+        {">LOG:1792769252,D,MANAGEMENT: CMD 'username \"Auth\" \"a\\\"b\\\\c\"'",
+         ">LOG:1792769252,D,MANAGEMENT: CMD 'username \"Auth\" \"a\\***\"'"},
+        {">LOG:1792769252,D,MANAGEMENT: CMD 'username \"Auth\" \"\"'",
+         ">LOG:1792769252,D,MANAGEMENT: CMD 'username \"Auth\" \"\"'"},
+        {">LOG:1792769252,D,MANAGEMENT: CMD 'password [...]'", ">LOG:1792769252,D,MANAGEMENT: CMD 'password [...]'"},
+        {">LOG:1792769252,D,MANAGEMENT: CMD 'username \"HTTP Proxy\" \"proxyuser\"'",
+         ">LOG:1792769252,D,MANAGEMENT: CMD 'username \"HTTP Proxy\" \"proxyuser\"'"},
+        {">PASSWORD:Need 'Auth' username/password", ">PASSWORD:Need 'Auth' username/password"},
+    };
+    for (const auto &row : rows) {
+        QCOMPARE(OpenVPNConnection::redactManagementLine(row.in), row.out);
     }
 }
 

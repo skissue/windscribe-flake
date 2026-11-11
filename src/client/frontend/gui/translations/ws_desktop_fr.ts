@@ -586,6 +586,18 @@ Si vous perdez le hachage de votre compte, il disparaît à jamais et le support
 <context>
     <name>MainWindow</name>
     <message>
+        <source>Windscribe could not update your hosts file, which IKEv2 requires. Another program, such as antivirus or endpoint security software, may be blocking changes to it. Please try again, or use a different connection mode.</source>
+        <translation>Windscribe n’a pas pu mettre à jour votre fichier hosts, nécessaire à IKEv2. Un autre programme, tel qu’un antivirus ou un logiciel de sécurité des points de terminaison, bloque peut-être les modifications de ce fichier. Veuillez réessayer ou utiliser un autre mode de connexion.</translation>
+    </message>
+    <message>
+        <source>Split Tunneling Stopped</source>
+        <translation>Split tunneling arrêté</translation>
+    </message>
+    <message>
+        <source>The split tunneling session ended unexpectedly. Please reconnect to retry. If this persists, please contact support.</source>
+        <translation>La session de split tunneling s’est terminée de manière inattendue. Veuillez vous reconnecter pour réessayer. Si le problème persiste, veuillez contacter le support.</translation>
+    </message>
+    <message>
         <source>Logging you in...</source>
         <translation>En vous connectant...</translation>
     </message>
@@ -632,10 +644,6 @@ Si vous perdez le hachage de votre compte, il disparaît à jamais et le support
     <message>
         <source>Could not run updater (Error %1).  Please contact support</source>
         <translation>Impossible d’exécuter le programme de mise à jour (erreur %1).  Veuillez contacter le support</translation>
-    </message>
-    <message>
-        <source>Read-Only File</source>
-        <translation>Fichier en lecture seule</translation>
     </message>
     <message>
         <source>The custom configuration could not be loaded.  Please check that it’s correct or contact support.</source>
@@ -824,10 +832,6 @@ Récupération...</translation>
     <message>
         <source>Select an application</source>
         <translation>Sélectionner une application</translation>
-    </message>
-    <message>
-        <source>Your hosts file is read-only. IKEv2 connectivity requires for it to be writable. Fix the issue automatically?</source>
-        <translation>Votre fichier hosts est en lecture seule. La connectivité IKEv2 nécessite qu’elle soit accessible en écriture. Résoudre le problème automatiquement ?</translation>
     </message>
     <message>
         <source>WireGuard adapter setup failed. Please wait one minute and try the connection again. If adapter setup fails again, please try restarting your computer.
@@ -1507,10 +1511,6 @@ Si le problème persiste après un redémarrage, envoyez un journal de débogage
         <translation>La désactivation de l’option Autoriser le trafic LAN entraînera l’arrêt du fonctionnement de votre point d’accès sécurisé.  Voulez-vous désactiver le hotspot ?</translation>
     </message>
     <message>
-        <source>MAC spoofing is not supported on your version of MacOS.</source>
-        <translation>L’usurpation d’adresse MAC n’est pas prise en charge sur votre version de MacOS.</translation>
-    </message>
-    <message>
         <source>Automatically determine the MTU for your connection, or manually override.  This has no effect on TCP-based protocols.</source>
         <translation>Déterminez automatiquement la MTU de votre connexion ou remplacez-la manuellement.  Cela n’a aucun effet sur les protocoles basés sur TCP.</translation>
     </message>
@@ -1565,7 +1565,7 @@ Si le problème persiste après un redémarrage, envoyez un journal de débogage
         <translation>Trafic de leurres</translation>
     </message>
     <message>
-        <source>This is an experimental feature that attempts to combat traffic correlation attacks on adversarial networks.When enabled, the app will generate random activity over the tunnel, and upload and download random data at chosen intervals.</source>
+        <source>This is an experimental feature that attempts to combat traffic correlation attacks on adversarial networks. When enabled, the app will generate random activity over the tunnel, and upload and download random data at chosen intervals.</source>
         <translation>Il s’agit d’une fonctionnalité expérimentale qui tente de lutter contre les attaques de corrélation de trafic sur les réseaux adverses. Lorsqu’elle est activée, l’application génère une activité aléatoire sur le tunnel, et télécharge et télécharge des données aléatoires à des intervalles choisis.</translation>
     </message>
     <message>
@@ -2378,6 +2378,10 @@ Se connecter d’abord à un réseau</translation>
 <context>
     <name>PreferencesWindow::SplitTunnelingAppsGroup</name>
     <message>
+        <source>This app is already in the list.</source>
+        <translation>Cette application figure déjà dans la liste.</translation>
+    </message>
+    <message>
         <source>There are too many apps in the list. Please remove some before adding more.</source>
         <translation>Il y a trop d’applications dans la liste. Veuillez en retirer quelques-uns avant d’en ajouter d’autres.</translation>
     </message>
@@ -2707,6 +2711,14 @@ Si la réinstallation ne résout pas le problème, veuillez contacter le support
         <translation>Le paramètre d’init d’AmneziaWG contient des caractères invalides</translation>
     </message>
     <message>
+        <source>Invalid AmneziaWG parameter: %1</source>
+        <translation>Invalid AmneziaWG parameter&#xa0;: %1</translation>
+    </message>
+    <message>
+        <source>Invalid &quot;PersistentKeepalive&quot; value</source>
+        <translation>Valeur invalide « PersistentKeepalive »</translation>
+    </message>
+    <message>
         <source>Static IPs</source>
         <translation>Adresses IP statiques</translation>
     </message>
@@ -2805,6 +2817,10 @@ Si la réinstallation ne résout pas le problème, veuillez contacter le support
     <message>
         <source>Alternate</source>
         <translation>Alternatif</translation>
+    </message>
+    <message>
+        <source>Windscribe is already running in another user session on this computer. Quit Windscribe in that session, then try again.</source>
+        <translation>Windscribe est déjà en cours d’exécution dans la session d’un autre utilisateur sur cet ordinateur. Quittez Windscribe dans cette session, puis réessayez.</translation>
     </message>
 </context>
 <context>

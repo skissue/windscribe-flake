@@ -29,12 +29,14 @@ private slots:
     void testPrepareInvalidNodeIpFails();
     void testParsePushReplyRedirectGateway();
     void testParsePushReplyNoRedirectGateway();
+    void testParsePushReplyIpv6Options();
     void testParsePushReplyMalformed();
     void testParseDeviceOpenedReply();
     void testParseDeviceOpenedReplyMalformed();
     void testParseConnectedSuccessReply();
     void testParseConnectedSuccessReplyMalformed();
     void testSanitizeString();
+    void testRedactManagementLine();
     void testMakeOvpnFileStunnelUsesLocalWrapper();
     void testMakeOvpnFileRemoteIpSuppression();
     void testMakeOvpnFileExtraConfigAppend();
@@ -42,6 +44,8 @@ private slots:
     void testMakeOvpnFileStunnelNoGatewayNoRoute();
     void testPrepareCustomConfigEmptyDnsNoInjection();
     void testOpenVpnCapabilities();
+    void testRunOpenVpnCustomConfigDetailEmitsCustomConfigInvalid();
+    void testRunOpenVpnEmptyDetailEmitsLaunchFailure();
 private:
     Helper *helper_ = nullptr;
 

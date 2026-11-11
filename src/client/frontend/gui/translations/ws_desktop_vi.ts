@@ -586,6 +586,18 @@ Nếu bạn mất hàm băm tài khoản của mình, nó sẽ biến mất vĩn
 <context>
     <name>MainWindow</name>
     <message>
+        <source>Windscribe could not update your hosts file, which IKEv2 requires. Another program, such as antivirus or endpoint security software, may be blocking changes to it. Please try again, or use a different connection mode.</source>
+        <translation>Windscribe không thể cập nhật tệp hosts của bạn, tệp mà IKEv2 yêu cầu. Một chương trình khác, chẳng hạn như phần mềm chống vi-rút hoặc phần mềm bảo mật điểm cuối, có thể đang chặn các thay đổi đối với tệp này. Vui lòng thử lại hoặc sử dụng chế độ kết nối khác.</translation>
+    </message>
+    <message>
+        <source>Split Tunneling Stopped</source>
+        <translation>Đường hầm phân chia đã dừng</translation>
+    </message>
+    <message>
+        <source>The split tunneling session ended unexpectedly. Please reconnect to retry. If this persists, please contact support.</source>
+        <translation>Phiên đường hầm phân chia đã kết thúc đột ngột. Vui lòng kết nối lại để thử lại. Nếu sự cố vẫn tiếp diễn, vui lòng liên hệ bộ phận hỗ trợ.</translation>
+    </message>
+    <message>
         <source>Logging you in...</source>
         <translation>Đăng nhập bạn vào...</translation>
     </message>
@@ -800,14 +812,6 @@ Phục hồi...</translation>
     <message>
         <source>Select an application</source>
         <translation>Chọn một ứng dụng</translation>
-    </message>
-    <message>
-        <source>Read-Only File</source>
-        <translation>Tệp chỉ đọc</translation>
-    </message>
-    <message>
-        <source>Your hosts file is read-only. IKEv2 connectivity requires for it to be writable. Fix the issue automatically?</source>
-        <translation>Tệp máy chủ lưu trữ của bạn ở chế độ chỉ đọc. Kết nối IKEv2 yêu cầu nó phải có thể ghi được. Tự động khắc phục sự cố?</translation>
     </message>
     <message>
         <source>The custom configuration could not be loaded.  Please check that it’s correct or contact support.</source>
@@ -1507,10 +1511,6 @@ Nếu sự cố vẫn tiếp diễn sau khi khởi động lại, vui lòng gử
         <translation>Vô hiệu hóa Cho phép lưu lượng mạng LAN sẽ khiến điểm phát sóng an toàn của bạn ngừng hoạt động.  Bạn có muốn tắt điểm phát sóng không?</translation>
     </message>
     <message>
-        <source>MAC spoofing is not supported on your version of MacOS.</source>
-        <translation>Giả mạo MAC không được hỗ trợ trên phiên bản MacOS của bạn.</translation>
-    </message>
-    <message>
         <source>Automatically determine the MTU for your connection, or manually override.  This has no effect on TCP-based protocols.</source>
         <translation>Tự động xác định MTU cho kết nối của bạn hoặc ghi đè theo cách thủ công.  Điều này không ảnh hưởng đến các giao thức dựa trên TCP.</translation>
     </message>
@@ -1565,7 +1565,7 @@ Nếu sự cố vẫn tiếp diễn sau khi khởi động lại, vui lòng gử
         <translation>Giao thông mồi nhử</translation>
     </message>
     <message>
-        <source>This is an experimental feature that attempts to combat traffic correlation attacks on adversarial networks.When enabled, the app will generate random activity over the tunnel, and upload and download random data at chosen intervals.</source>
+        <source>This is an experimental feature that attempts to combat traffic correlation attacks on adversarial networks. When enabled, the app will generate random activity over the tunnel, and upload and download random data at chosen intervals.</source>
         <translation>Đây là một tính năng thử nghiệm cố gắng chống lại các cuộc tấn công tương quan lưu lượng truy cập vào các mạng đối thủ. Khi được bật, ứng dụng sẽ tạo hoạt động ngẫu nhiên qua đường hầm và tải lên và tải xuống dữ liệu ngẫu nhiên theo các khoảng thời gian đã chọn.</translation>
     </message>
     <message>
@@ -2378,6 +2378,10 @@ Kết nối với mạng trước</translation>
 <context>
     <name>PreferencesWindow::SplitTunnelingAppsGroup</name>
     <message>
+        <source>This app is already in the list.</source>
+        <translation>Ứng dụng này đã có trong danh sách.</translation>
+    </message>
+    <message>
         <source>There are too many apps in the list. Please remove some before adding more.</source>
         <translation>Có quá nhiều ứng dụng trong danh sách. Vui lòng xóa một số trước khi thêm nhiều hơn.</translation>
     </message>
@@ -2707,6 +2711,14 @@ Nếu việc cài đặt lại không hiệu quả, vui lòng liên hệ với b
         <translation>Tham số init AmneziaWG chứa các ký tự không hợp lệ</translation>
     </message>
     <message>
+        <source>Invalid AmneziaWG parameter: %1</source>
+        <translation>Tham số AmneziaWG không hợp lệ: %1</translation>
+    </message>
+    <message>
+        <source>Invalid &quot;PersistentKeepalive&quot; value</source>
+        <translation>Giá trị &quot;PersistentKeepalive&quot; không hợp lệ</translation>
+    </message>
+    <message>
         <source>Static IPs</source>
         <translation>IP tĩnh</translation>
     </message>
@@ -2805,6 +2817,10 @@ Nếu việc cài đặt lại không hiệu quả, vui lòng liên hệ với b
     <message>
         <source>Alternate</source>
         <translation>Thay thế</translation>
+    </message>
+    <message>
+        <source>Windscribe is already running in another user session on this computer. Quit Windscribe in that session, then try again.</source>
+        <translation>Windscribe đang chạy trong phiên của người dùng khác trên máy tính này. Vui lòng thoát Windscribe trong phiên đó rồi thử lại.</translation>
     </message>
 </context>
 <context>

@@ -586,6 +586,18 @@ If you lose your account hash, it&apos;s gone forever and support cannot help yo
 <context>
     <name>MainWindow</name>
     <message>
+        <source>Windscribe could not update your hosts file, which IKEv2 requires. Another program, such as antivirus or endpoint security software, may be blocking changes to it. Please try again, or use a different connection mode.</source>
+        <translation>Windscribe 无法更新 IKEv2 所需的 hosts 文件。其他程序（例如防病毒软件或端点安全软件）可能正在阻止对其进行更改。请重试，或使用其他连接模式。</translation>
+    </message>
+    <message>
+        <source>Split Tunneling Stopped</source>
+        <translation>拆分隧道已停止</translation>
+    </message>
+    <message>
+        <source>The split tunneling session ended unexpectedly. Please reconnect to retry. If this persists, please contact support.</source>
+        <translation>拆分隧道会话意外结束。请重新连接以重试。如果问题持续存在，请联系支持人员。</translation>
+    </message>
+    <message>
         <source>Logging you in...</source>
         <translation>正在登录...</translation>
     </message>
@@ -800,14 +812,6 @@ Recovering...</source>
     <message>
         <source>Select an application</source>
         <translation>选择一个应用程序</translation>
-    </message>
-    <message>
-        <source>Read-Only File</source>
-        <translation>只读文件</translation>
-    </message>
-    <message>
-        <source>Your hosts file is read-only. IKEv2 connectivity requires for it to be writable. Fix the issue automatically?</source>
-        <translation>主机文件是只读的。IKEv2 连接要求它是可写的。自动修复问题？</translation>
     </message>
     <message>
         <source>The custom configuration could not be loaded.  Please check that it’s correct or contact support.</source>
@@ -1507,10 +1511,6 @@ If the problem persists after a restart, please send a debug log and open a supp
         <translation>禁用允许 LAN 流量将导致您的安全热点停止工作。是否要禁用热点？</translation>
     </message>
     <message>
-        <source>MAC spoofing is not supported on your version of MacOS.</source>
-        <translation>您的 MacOS 版本不支持 MAC 欺骗。</translation>
-    </message>
-    <message>
         <source>Automatically determine the MTU for your connection, or manually override.  This has no effect on TCP-based protocols.</source>
         <translation>自动确定 MTU，或手动指定。这不影响 TCP 协议。</translation>
     </message>
@@ -1565,7 +1565,7 @@ If the problem persists after a restart, please send a debug log and open a supp
         <translation>虚假流量</translation>
     </message>
     <message>
-        <source>This is an experimental feature that attempts to combat traffic correlation attacks on adversarial networks.When enabled, the app will generate random activity over the tunnel, and upload and download random data at chosen intervals.</source>
+        <source>This is an experimental feature that attempts to combat traffic correlation attacks on adversarial networks. When enabled, the app will generate random activity over the tunnel, and upload and download random data at chosen intervals.</source>
         <translation>这是一项实验性功能，旨在打击对抗性网络上的流量关联攻击。启用后，应用程序将在隧道上按照流量设置随机上传或下载数据。</translation>
     </message>
     <message>
@@ -2378,6 +2378,10 @@ Connect to a network first</source>
 <context>
     <name>PreferencesWindow::SplitTunnelingAppsGroup</name>
     <message>
+        <source>This app is already in the list.</source>
+        <translation>此应用已在列表中。</translation>
+    </message>
+    <message>
         <source>There are too many apps in the list. Please remove some before adding more.</source>
         <translation>列表中的应用太多。在添加新条目之前，请删除一些</translation>
     </message>
@@ -2707,6 +2711,14 @@ If the reinstall does not help, please contact Windscribe support for assistance
         <translation>AmneziaWG 初始化参数包含无效字符</translation>
     </message>
     <message>
+        <source>Invalid AmneziaWG parameter: %1</source>
+        <translation>Invalid AmneziaWG parameter： %1</translation>
+    </message>
+    <message>
+        <source>Invalid &quot;PersistentKeepalive&quot; value</source>
+        <translation>无效的“PersistentKeepalive” 值</translation>
+    </message>
+    <message>
         <source>Static IPs</source>
         <translation>静态 IP</translation>
     </message>
@@ -2805,6 +2817,10 @@ If the reinstall does not help, please contact Windscribe support for assistance
     <message>
         <source>Alternate</source>
         <translation>替代</translation>
+    </message>
+    <message>
+        <source>Windscribe is already running in another user session on this computer. Quit Windscribe in that session, then try again.</source>
+        <translation>Windscribe 已在此电脑上另一个用户的会话中运行。请在该会话中退出 Windscribe，然后重试。</translation>
     </message>
 </context>
 <context>

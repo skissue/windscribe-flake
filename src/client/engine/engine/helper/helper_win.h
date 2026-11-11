@@ -28,12 +28,16 @@ public:
     bool sendConnectStatus(bool isConnected, bool isTerminateSocket, bool isKeepLocalSocket,
                            const AdapterGatewayInfo &defaultAdapter, const AdapterGatewayInfo &vpnAdapter,
                            const QString &connectedIp, const types::Protocol &protocol,
-                           const QStringList &dnsWhitelistIps = QStringList());
+                           const QStringList &dnsWhitelistIps = QStringList(),
+                           bool isVpnSessionActive = false);
     void changeMtu(const QString &adapter, int mtu);
     // OpenVPN chooses its own management port; on success outPort/outPid receive the OS-assigned
     // management port and the OpenVPN PID, which the engine uses to verify the management peer.
+    // outDetail receives the daemon's fatal text when OpenVPN exits before binding its management
+    // port. It is empty for every other failure. outPort and outPid are set only on success.
     bool executeOpenVPN(const QString &config, const QString &httpProxy, unsigned int httpPort,
-                        const QString &socksProxy, unsigned int socksPort, unsigned int &outPort, unsigned long &outPid);
+                        const QString &socksProxy, unsigned int socksPort, unsigned int &outPort,
+                        unsigned long &outPid, QString &outDetail);
 
     bool executeTaskKill(CmdKillTarget target);
 
@@ -90,7 +94,6 @@ public:
     void addIKEv2DefaultRoute();
     void removeAppNetworkProfiles();
     void setIKEv2IPSecParameters();
-    bool makeHostsFileWritable();
 
     void setCustomDnsIps(const QStringList& ips);
 

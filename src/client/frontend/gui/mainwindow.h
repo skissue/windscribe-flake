@@ -2,28 +2,30 @@
 
 #include <QSocketNotifier>
 #include <QSystemTrayIcon>
+#include <QTimer>
 #include <QWidget>
 #include <QWidgetAction>
-#include "generalmessagecontroller.h"
-#include "mainwindowcontroller.h"
 
-#include "locationswindow/locationswindow.h"
+#include "api_responses/checkupdate.h"
+#include "api_responses/robertfilter.h"
 #include "backend/backend.h"
-#include "localipcserver/localipcserver.h"
 #include "backend/notificationscontroller.h"
+#include "blockconnect.h"
+#include "dialogs/advancedparametersdialog.h"
+#include "freetrafficnotificationcontroller.h"
+#include "generalmessagecontroller.h"
+#include "graphicresources/iconmanager.h"
+#include "localipcserver/localipcserver.h"
+#include "locations/model/selectedlocation.h"
+#include "locationswindow/locationswindow.h"
 #include "log/logviewerwindow.h"
 #include "loginattemptscontroller.h"
+#include "mainwindowcontroller.h"
 #include "multipleaccountdetection/imultipleaccountdetection.h"
-#include "blockconnect.h"
-#include "freetrafficnotificationcontroller.h"
-#include "graphicresources/iconmanager.h"
-#include "trayicon.h"
-#include "dialogs/advancedparametersdialog.h"
-#include "locations/model/selectedlocation.h"
-#include "api_responses/robertfilter.h"
-#include "api_responses/checkupdate.h"
 #include "protocolwindow/protocolwindowmode.h"
 #include "sounds/soundmanager.h"
+#include "splittunnelfailurepolicy.h"
+#include "trayicon.h"
 
 #if defined(Q_OS_MACOS)
 #include "permissions/permissionmonitor_mac.h"
@@ -105,8 +107,8 @@ private slots:
     void onConnectWindowLocationTabClicked(LOCATION_TAB tab);
     void onConnectWindowSearchFilterChanged(const QString &filter);
     void onConnectWindowLocationsKeyPressed(QKeyEvent *event);
-    void onPinIp(); // Also used by IPC
-    void onUnpinIp(const QString &ip); // Also used by IPC
+    void onPinIp();
+    void onUnpinIp(const QString &ip);
 
     // news feed window signals
     void onEscapeNotificationsClick();
@@ -231,6 +233,8 @@ private slots:
     void onSplitTunnelingStartFailed(SPLIT_TUNNEL_START_FAIL_REASON reason);
     void onBackendBridgeApiAvailabilityChanged(bool isAvailable);
     void onBackendIpRotateResult(bool success);
+    void onBackendIpRotateReadyChanged();
+    void onLocationsModelDataChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight, const QList<int> &roles);
     void onBackendClearWifiHistoryFinished(bool bSuccess);
 
     void onBackendEngineCrash();
@@ -264,9 +268,7 @@ private slots:
     void onAppCloseRequest();
 
     // LocalIPCServer signals
-    void onIpcOpenLocations(IPC::CliCommands::LocationType type);
     void onIpcConnect(const LocationID &id, const types::Protocol &protocol, uint port);
-    void onIpcConnectStaticIp(const QString &location, const types::Protocol &protocol, uint port);
     void onIpcUpdate();
 
     void showShutdownWindow();
@@ -305,6 +307,9 @@ private slots:
 #endif
 
 private:
+    SplitTunnelFailurePolicy splitTunnelFailurePolicy_;
+    // The selected location as the API knows it, which is what carries a pinned IP: Best Location is an alias and has none.
+    QModelIndex selectedApiLocationIndex() const;
     void gotoWelcomeWindow();
     void gotoLoginWindow();
     void gotoLogoutWindow();
@@ -410,6 +415,8 @@ private:
 
     bool sendDebugLogOnDisconnect_;
     bool receivedInitialIpAfterConnect_;
+    // The address last shown, which is what a pin is compared against.
+    QString myIp_;
 
     QSocketNotifier *socketNotifier_;
     int fd_;

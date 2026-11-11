@@ -43,6 +43,7 @@ private slots:
     void testErrorClassificationAuthErrorFatalWhenEmit();
     void testProcessNotRespondingSettlesViaForcedDisconnect();
     void testErrorClassificationImmediateStop();
+    void testErrorDetailReachesErrorDuringConnection();
     void testAuthErrorRetryableWhenNotEmit();
     void testManualModeWireGuardErrorIsFatal();
     void testAutomaticModeWireGuardErrorIsRetryable();
@@ -92,9 +93,9 @@ private slots:
     void testWakeWhileOfflineWithoutConnectorPollsAndReconnects();
     void testConnectorReconnectingSignalFromConnected();
     void testOnlineButNoDefaultAdapterWaitsForNetwork();
+    void testDefaultAdapterDetectedBeforeConnector();
     void testNoWaitPolicyFailsFastWhenOffline();
     void testLockdownModeIkev2Error();
-    void testTunnelTestAttemptsZeroSurfacesResult();
     void testRequestUsernameForwarded();
     void testRequestPasswordForwarded();
     void testUsernameRequestAnsweredFromSessionCache();
@@ -124,6 +125,8 @@ private slots:
     void testDnsCtrldKilledOnUserDisconnect();
     void testDnsCtrldKilledOnReconnect();
     void testDnsSplitDnsPassesUpstreamsAndHostnames();
+    void testDnsIncompleteSplitDns_data();
+    void testDnsIncompleteSplitDns();
     void testDnsDohUpstreamQueries();
     void testConnectorErrorWhileStoppingIsInert();
     void testSecondClickDisconnectWhileStoppingIsNoOp();
@@ -171,7 +174,6 @@ private slots:
     void testBlockingDisconnectFromConnectedRunsCleanup();
     void testUpdateConnectionSettingsDuringReconnectingIsDeferred();
     void testEmptyWalkFailsWithLocationUnavailable();
-    void testTunnelTestAttemptsZeroSuccessDropsIp();
     void testErrorQueuedBeforeSleepIgnoredInSleeping();
     void testErrorAfterBlockingDisconnectIgnored();
     void testClassifyPrepareErrorMatrix();
